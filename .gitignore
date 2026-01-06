@@ -1,7 +1,24 @@
+# Environment variables
 .env
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# IDE
 .idea/
 .vscode/
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Test files (optional - remove if you want to include)
+test.py

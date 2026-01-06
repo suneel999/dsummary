@@ -3,14 +3,19 @@ from flask import Flask, request, render_template, send_file, flash, redirect, u
 from docxtpl import DocxTemplate
 from dotenv import load_dotenv
 from io import BytesIO
-import os, tempfile, json, requests, re, time
+import os, tempfile, json, requests, re, time, random
 from datetime import datetime
 import pdfplumber
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+
+# Production-ready configuration
+app.secret_key = os.getenv("SECRET_KEY", "change-this-in-production-to-random-string")
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+app.config['SESSION_COOKIE_SECURE'] = os.getenv("FLASK_ENV") == "production"
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # load environment variables from .env
 load_dotenv()
@@ -20,7 +25,8 @@ load_dotenv()
 ALLOWED_EXTENSIONS = {'pdf'}
 # os.makedirs(SAVED_DOCUMENTS_DIR, exist_ok=True)  # no longer needed
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# GEMINI_API_KEY removed from top-level to allow dynamic reloading
+GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def allowed_file(filename):
@@ -32,7 +38,14 @@ def extract_text_from_pdf(file_path):
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 
-def get_json_from_pdf_via_gemini(pdf_path, max_retries=3, retry_delay=2):
+def get_json_from_pdf_via_gemini(pdf_path, max_retries=5, base_delay=2):
+    # Force reload environment variables to pick up key changes without restart
+    load_dotenv(override=True)
+    current_api_key = os.getenv("GEMINI_API_KEY")
+    
+    if not current_api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY environment variable")
+
     pdf_text = extract_text_from_pdf(pdf_path)
 
     prompt = f"""
@@ -91,16 +104,13 @@ PDF text:
 \"\"\"
 """
 
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Missing GEMINI_API_KEY environment variable")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={current_api_key}"
     headers = {"Content-Type": "application/json"}
     body = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, headers=headers, json=body, timeout=20)
+            response = requests.post(url, headers=headers, json=body, timeout=30)
             response.raise_for_status()
             content = response.json()
 
@@ -113,7 +123,10 @@ PDF text:
 
         except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(retry_delay)
+                # Exponential backoff with jitter: base_delay * (2^attempt) + random jitter
+                sleep_time = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+                print(f"Attempt {attempt + 1} failed: {e}. Retrying in {sleep_time:.2f}s...")
+                time.sleep(sleep_time)
                 continue
             raise
 
