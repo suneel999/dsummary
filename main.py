@@ -175,7 +175,8 @@ def home():
             json_data = get_json_from_pdf_via_gemini(temp_path)
             session['json_data'] = json_data
             flash("PDF processed. Please review and edit before generating.", "info")
-            return redirect(url_for("review"))
+            return redirect("review")
+
 
         except Exception as e:
             flash(f"❌ Error: {str(e)}", "danger")
@@ -191,7 +192,8 @@ def review():
         data = session.get('json_data')
         if not data:
             flash("No data to review. Please upload a PDF first.", "warning")
-            return redirect(url_for("home"))
+            return redirect(".")
+
         return render_template("edit_form.html", data=data)
 
     # POST request uses the original, reliable logic to generate the document
@@ -379,7 +381,8 @@ def review():
         except Exception as e:
             app.logger.error(f"Error in /review [POST]: {e}", exc_info=True)
             flash(f"❌ Error during generation: {str(e)}", "danger")
-            return redirect(url_for("review", _external=False))
+            return redirect("review")
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", "8000")), debug=False)
