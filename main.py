@@ -9,6 +9,11 @@ import pdfplumber
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+app.config["APPLICATION_ROOT"] = "/internal"
 
 # Production-ready configuration
 app.secret_key = os.getenv("SECRET_KEY", "change-this-in-production-to-random-string")
@@ -374,7 +379,7 @@ def review():
         except Exception as e:
             app.logger.error(f"Error in /review [POST]: {e}", exc_info=True)
             flash(f"❌ Error during generation: {str(e)}", "danger")
-            return redirect(url_for("review"))
+            return redirect(url_for("review", _external=False))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", "8000")), debug=False)
