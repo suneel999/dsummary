@@ -321,3 +321,4 @@ If you encounter issues:
 2. Verify all configuration files are correct
 3. Ensure your Gemini API key is valid and has quota
 
+

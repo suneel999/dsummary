@@ -1,5 +1,5 @@
 # imports
-from flask import Flask, request, render_template, send_file, flash, redirect, url_for, session
+from flask import Flask, request, render_template, send_file, flash, redirect, url_for
 from docxtpl import DocxTemplate
 from dotenv import load_dotenv
 from io import BytesIO
@@ -7,19 +7,14 @@ import os, tempfile, json, requests, re, time, random
 from datetime import datetime
 import pdfplumber
 from werkzeug.utils import secure_filename
-
-app = Flask(__name__)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-app.wsgi_app = ProxyFix(
-    app.wsgi_app,
-    x_proto=1,
-    x_host=1,
-    x_prefix=1
-)
-
+app = Flask(__name__)
 app.secret_key = "supersecretkey"
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+
+# Support running behind reverse proxy with sub-path (e.g., /internal)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)
 
 # load environment variables from .env
 load_dotenv()
@@ -170,11 +165,10 @@ def home():
             temp_path = os.path.join(tempfile.gettempdir(), filename)
             file.save(temp_path)
 
-            # Extract JSON and go to review step instead of immediate generation
+            # Extract JSON and render review page directly (no session storage)
             json_data = get_json_from_pdf_via_gemini(temp_path)
-            session['json_data'] = json_data
             flash("PDF processed. Please review and edit before generating.", "info")
-            return redirect(url_for("review"))
+            return render_template("edit_form.html", data=json_data)
 
         except Exception as e:
             flash(f"❌ Error: {str(e)}", "danger")
@@ -185,20 +179,21 @@ def home():
 
 @app.route("/review", methods=["GET", "POST"])
 def review():
-    # GET request renders the form with data from the session
+    # GET request redirects to home - data is passed via hidden form field, not session
     if request.method == "GET":
-        data = session.get('json_data')
-        if not data:
-            flash("No data to review. Please upload a PDF first.", "warning")
-            return redirect(url_for("home"))
-        return render_template("edit_form.html", data=data)
+        flash("No data to review. Please upload a PDF first.", "warning")
+        return redirect(url_for("home"))
 
-    # POST request uses the original, reliable logic to generate the document
+    # POST request uses hidden field json_data instead of session
     if request.method == "POST":
         try:
-            # 1. Combine original data from session with edits from the form
-            # This mirrors the structure of the original `json_data` object
-            session_data = session.get('json_data') or {}
+            # Get original JSON from hidden form field (not session)
+            raw_json = request.form.get("json_data")
+            if not raw_json:
+                flash("Data expired. Please upload PDF again.", "warning")
+                return redirect(url_for("home"))
+
+            session_data = json.loads(raw_json)
             edited_data = {
                 # Keep personal info from the original upload
                 "umr": session_data.get("umr", "N/A"),
@@ -378,7 +373,10 @@ def review():
         except Exception as e:
             app.logger.error(f"Error in /review [POST]: {e}", exc_info=True)
             flash(f"❌ Error during generation: {str(e)}", "danger")
-            return redirect(url_for("review"))
+            # Re-render form with data from hidden field (don't redirect, would lose data)
+            if raw_json:
+                return render_template("edit_form.html", data=json.loads(raw_json))
+            return redirect(url_for("home"))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", "8000")), debug=False)

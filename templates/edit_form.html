@@ -46,6 +46,7 @@
             {% endwith %}
 
             <form method="POST" action="{{ url_for('review') }}">
+                <input type="hidden" name="json_data" value='{{ data | tojson | safe }}'>
                 <!-- Medical content only: Diagnosis, Risk Factors, Past History, Chief Complaints, Course -->
                 {% set diag = data.get('Diagnosis', []) %}
                 {% set risk = data.get('Riskfactors', []) %}

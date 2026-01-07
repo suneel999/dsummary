@@ -33,12 +33,14 @@ apt update && apt upgrade -y
 
 # Step 2: Install required packages
 echo -e "${YELLOW}[2/8] Installing required packages...${NC}"
-apt install -y python3 python3-pip python3-venv nginx
+apt install -y python3 python3-pip python3-venv nginx git
 
-# Step 3: Create application directory
-echo -e "${YELLOW}[3/8] Setting up application directory...${NC}"
-mkdir -p $APP_DIR
-cp -r . $APP_DIR/
+# Step 3: Clone from GitHub
+echo -e "${YELLOW}[3/8] Cloning application from GitHub...${NC}"
+if [ -d "$APP_DIR" ]; then
+    rm -rf $APP_DIR
+fi
+git clone https://github.com/suneel999/dsummary.git $APP_DIR
 chown -R $APP_USER:$APP_USER $APP_DIR
 
 # Step 4: Create virtual environment and install dependencies
