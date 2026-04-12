@@ -4,8 +4,10 @@ This app is now ready for AWS with two practical options:
 
 1. `EC2 + Nginx + systemd`
    Best if you want the simplest lift from your current VPS-style setup.
-2. `Docker + App Runner`
+2. `Docker + ECS Express Mode`
    Best if you want a cleaner managed deployment with less server maintenance.
+
+For new AWS setups, prefer ECS Express Mode over App Runner. AWS App Runner closes to new customers starting April 30, 2026.
 
 ## Environment Variables
 
@@ -105,7 +107,7 @@ sudo journalctl -u dsumarry -n 100
 
 ---
 
-## Option 2: Deploy with Docker on AWS App Runner
+## Option 2: Deploy with Docker on AWS ECS Express Mode
 
 ### 1. Build the container locally
 
@@ -129,14 +131,15 @@ docker tag dsumarry:latest ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/dsumarry:late
 docker push ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/dsumarry:latest
 ```
 
-### 4. Create the App Runner service
+### 4. Create the ECS Express Mode service
 
-- Source: `Amazon ECR`
-- Image: `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/dsumarry:latest`
-- Port: `8000`
-- Health check path: `/health`
+- Open the ECS console and choose `Express mode`
+- Choose your ECR image: `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/dsumarry:latest`
+- Set the container port to `8000`
+- Set the health check path to `/health`
+- Let ECS create or use the required execution/infrastructure IAM roles
 
-### 5. Set runtime environment variables in App Runner
+### 5. Set runtime environment variables in ECS Express Mode
 
 - `SECRET_KEY`
 - `OPENAI_API_KEY`
@@ -147,7 +150,7 @@ docker push ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/dsumarry:latest
 - `GUNICORN_TIMEOUT=180`
 - `FLASK_ENV=production`
 
-For production, store `OPENAI_API_KEY` and `SECRET_KEY` in AWS Secrets Manager and inject them into App Runner instead of typing them manually.
+For production, store `OPENAI_API_KEY` and `SECRET_KEY` in AWS Secrets Manager and inject them into ECS instead of typing them manually.
 
 ---
 
@@ -155,4 +158,4 @@ For production, store `OPENAI_API_KEY` and `SECRET_KEY` in AWS Secrets Manager a
 
 If you want the least risky path, start with `EC2 + Nginx + systemd` because it matches the files already in this repo.
 
-If you want easier long-term ops, use `Docker + App Runner`.
+If you want easier long-term ops, use `Docker + ECS Express Mode`.
