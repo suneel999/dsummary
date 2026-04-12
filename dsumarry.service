@@ -8,11 +8,12 @@ Group=www-data
 WorkingDirectory=/var/www/dsumarry
 Environment="PATH=/var/www/dsumarry/venv/bin"
 EnvironmentFile=/var/www/dsumarry/.env
-ExecStart=/var/www/dsumarry/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 --timeout 120 main:app
+ExecStart=/bin/sh -c '/var/www/dsumarry/venv/bin/gunicorn --workers ${GUNICORN_WORKERS:-3} --bind 127.0.0.1:${PORT:-8000} --timeout ${GUNICORN_TIMEOUT:-180} main:app'
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+
 
 

@@ -5,119 +5,662 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Medical Discharge Summary Generator</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #f4f6f9; font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
-        .upload-container { background: #fff; border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.08); padding: 2rem; margin-top: 2rem; }
-        .header { background: linear-gradient(135deg, #0d6efd, #6610f2); color: white; padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; }
-        .file-input-label { cursor: pointer; padding: 1rem; border: 2px dashed #dee2e6; border-radius: 10px; text-align: center; transition: all 0.25s; background: #fafbff; }
-        .file-input-label:hover { border-color: #0d6efd; background-color: #f0f7ff; }
-        .btn-upload { background-color: #0d6efd; border: none; padding: 0.75rem 1.6rem; border-radius: 10px; }
-        .btn-upload:hover { background-color: #0b5ed7; }
-        .loading-spinner { display: none; margin-left: .5rem; }
+        :root {
+            --primary-color: #0066cc;
+            --primary-dark: #004d99;
+            --primary-gradient: linear-gradient(135deg, #0066cc 0%, #004d99 100%);
+            --success-color: #00a86b;
+            --success-gradient: linear-gradient(135deg, #00a86b 0%, #008855 100%);
+            --danger-gradient: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            --card-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            --card-shadow-hover: 0 8px 30px rgba(0,0,0,0.12);
+            --border-radius: 12px;
+            --transition: all 0.25s ease;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body { 
+            background: #f0f4f8;
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1a1a2e;
+            line-height: 1.6;
+        }
+        .main-container { 
+            max-width: 960px; 
+            margin: 0 auto; 
+            padding: 2rem 1.5rem;
+        }
+        .header-card {
+            background: var(--primary-gradient);
+            color: white;
+            border-radius: var(--border-radius);
+            padding: 2rem 2.5rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--card-shadow);
+            position: relative;
+            overflow: hidden;
+        }
+        .header-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            pointer-events: none;
+        }
+        .header-card h1 {
+            font-weight: 700;
+            font-size: 1.75rem;
+            margin-bottom: 0.4rem;
+            letter-spacing: -0.5px;
+        }
+        .header-card p {
+            opacity: 0.9;
+            margin-bottom: 0;
+            font-size: 0.95rem;
+            font-weight: 400;
+        }
+        .option-card {
+            background: #ffffff;
+            border-radius: var(--border-radius);
+            box-shadow: var(--card-shadow);
+            padding: 1.75rem;
+            height: 100%;
+            transition: var(--transition);
+            border: 2px solid #e8ecef;
+        }
+        .option-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--card-shadow-hover);
+            border-color: #d0d7de;
+        }
+        .option-card.selected {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+        }
+        .option-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.25rem;
+            font-size: 1.5rem;
+        }
+        .option-icon.pdf {
+            background: var(--danger-gradient);
+            color: white;
+        }
+        .option-icon.manual {
+            background: var(--success-gradient);
+            color: white;
+        }
+        .option-title {
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #1a1a2e;
+        }
+        .option-desc {
+            color: #5c6370;
+            font-size: 0.875rem;
+            margin-bottom: 1.25rem;
+            line-height: 1.5;
+        }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 1.25rem 0;
+            text-align: left;
+        }
+        .feature-list li {
+            padding: 0.35rem 0;
+            color: #5c6370;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+        }
+        .feature-list li i {
+            color: var(--success-color);
+            margin-right: 0.6rem;
+            font-size: 0.9rem;
+        }
+        .btn-option {
+            width: 100%;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .btn-option:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        .btn-pdf {
+            background: var(--danger-gradient);
+            border: none;
+            color: white;
+        }
+        .btn-pdf:hover:not(:disabled) {
+            background: linear-gradient(135deg, #c82333 0%, #a71d2a 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(220,53,69,0.35);
+        }
+        .btn-manual {
+            background: var(--success-gradient);
+            border: none;
+            color: white;
+        }
+        .btn-manual:hover:not(:disabled) {
+            background: linear-gradient(135deg, #008855 0%, #006644 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,168,107,0.35);
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 1.5rem 0;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e8ecef;
+        }
+        .divider span {
+            padding: 0 1rem;
+            color: #8b95a1;
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+        .file-upload-area {
+            border: 2px dashed #d0d7de;
+            border-radius: var(--border-radius);
+            padding: 2rem 1.5rem;
+            text-align: center;
+            transition: var(--transition);
+            background: #f8fafc;
+            margin-bottom: 1.25rem;
+            cursor: pointer;
+        }
+        .file-upload-area:hover, .file-upload-area.dragover {
+            border-color: var(--primary-color);
+            background: #f0f7ff;
+        }
+        .file-upload-area i {
+            font-size: 2.5rem;
+            color: #8b95a1;
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+        .file-upload-area p {
+            margin-bottom: 0.25rem;
+            font-size: 0.9rem;
+            color: #5c6370;
+        }
+        .file-upload-area.has-file {
+            border-color: var(--success-color);
+            background: #f0fff8;
+        }
+        .file-upload-area.has-file i {
+            color: var(--success-color);
+        }
+        .loading-spinner { 
+            display: none; 
+        }
+        #fileName {
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-top: 0.75rem;
+            font-size: 0.9rem;
+        }
+        .alert {
+            border-radius: var(--border-radius);
+            border: none;
+            font-size: 0.9rem;
+            padding: 0.875rem 1rem;
+        }
+        .section-title {
+            color: #1a1a2e;
+        }
+        .step-badge {
+            background: var(--primary-gradient);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-right: 0.75rem;
+        }
+        .form-select {
+            border: 2px solid #e8ecef;
+            border-radius: 8px;
+            padding: 0.65rem 1rem;
+            font-size: 0.9rem;
+            transition: var(--transition);
+            background-color: #fff;
+        }
+        .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+        }
+        .form-select-lg {
+            padding: 0.75rem 1rem;
+        }
+        .form-check-input {
+            width: 1.1rem;
+            height: 1.1rem;
+            border: 2px solid #d0d7de;
+            cursor: pointer;
+        }
+        .form-check-input:checked {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        .form-check-input:focus {
+            box-shadow: 0 0 0 3px rgba(0,102,204,0.15);
+        }
+        .form-check-label {
+            cursor: pointer;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            transition: var(--transition);
+            font-size: 0.9rem;
+        }
+        .form-check-input:checked + .form-check-label {
+            background: rgba(0,102,204,0.08);
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        .form-label {
+            font-weight: 500;
+            color: #1a1a2e;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
 
-        /* Mobile responsiveness */
-        @media (max-width: 576px) {
-            .upload-container { padding: 1rem; }
-            .btn-upload { width: 100%; }
-            .file-input-label { padding: 0.75rem; }
-            #fileName { font-size: 0.95rem; }
+        /* Modal Styling */
+        .modal-content {
+            border-radius: var(--border-radius);
+            border: none;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+            overflow: hidden;
+        }
+        .modal-header {
+            background: var(--primary-gradient);
+            color: white;
+            border-radius: 0;
+            padding: 1.25rem 1.5rem;
+            border-bottom: none;
+        }
+        .modal-title {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+        .modal-header .btn-close {
+            filter: brightness(0) invert(1);
+            opacity: 0.8;
+        }
+        .modal-header .btn-close:hover {
+            opacity: 1;
+        }
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        /* Doctor selection card */
+        #doctorSelection {
+            border: 2px solid #e8ecef;
+            margin-bottom: 1.5rem;
+        }
+        #doctorSelection:hover {
+            border-color: #d0d7de;
+        }
+
+        @media (max-width: 768px) {
+            .main-container { padding: 1rem; }
+            .header-card { padding: 1.5rem; }
+            .header-card h1 { font-size: 1.4rem; }
+            .option-card { padding: 1.25rem; margin-bottom: 1rem; }
+            .option-icon { width: 52px; height: 52px; font-size: 1.25rem; border-radius: 12px; }
+            .btn-option { padding: 0.7rem 1rem; font-size: 0.85rem; }
+            .form-select { font-size: 0.85rem; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="upload-container">
-                    <div class="header text-center">
-                        <h2>Discharge Summary Generator</h2>
-                        <p class="mb-0">Step 1: Upload PDF. Step 2: Review & Edit. Step 3: Generate.</p>
+    <div class="main-container">
+        <!-- Header -->
+        <div class="header-card">
+            <h1><i class="bi bi-file-medical me-2"></i>Discharge Summary Generator</h1>
+            <p>Create professional medical discharge documents quickly and easily</p>
+        </div>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
 
-                    {% with messages = get_flashed_messages(with_categories=true) %}
-                        {% if messages %}
-                            {% for category, message in messages %}
-                                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                                    {{ message }}
-                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                                </div>
-                            {% endfor %}
-                        {% endif %}
-                    {% endwith %}
+        <!-- Step 1: Doctor & Template Selection -->
+        <div class="option-card mb-4" id="doctorSelection">
+            <div class="section-title d-flex align-items-center mb-3">
+                <span class="step-badge">1</span>
+                <span style="font-weight: 600; font-size: 1rem;">Select Doctor & Template</span>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Select Doctor</label>
+                    <select class="form-select form-select-lg" id="doctorSelect" required>
+                        <option value="">-- Choose a Doctor --</option>
+                        {% for doctor_key, doctor_info in doctors.items() %}
+                        <option value="{{ doctor_key }}">{{ doctor_key | title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Select Template Type</label>
+                    <div class="d-flex gap-3 mt-2">
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="templateType" id="templateDefault" value="default" checked>
+                            <label class="form-check-label" for="templateDefault">
+                                <i class="bi bi-file-earmark-text me-1"></i> Default
+                            </label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="templateType" id="templateCustom" value="custom">
+                            <label class="form-check-label" for="templateCustom">
+                                <i class="bi bi-file-earmark-richtext me-1"></i> Custom
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="templateStatus" class="alert alert-warning mt-3 d-none">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                <span id="templateStatusText"></span>
+            </div>
+        </div>
 
-                    <form method="POST" enctype="multipart/form-data">
-                        <div class="mb-4">
-                            <label for="pdf" class="form-label fw-bold">Patient Discharge PDF</label>
-                            <div class="file-input-label" id="fileDropArea">
-                                <i class="bi bi-cloud-arrow-up fs-1"></i>
-                                <p class="mb-2">Drag & drop your PDF here or click to browse</p>
-                                <input type="file" class="form-control" id="pdf" name="pdf" accept=".pdf" required>
-                                <small class="text-muted">Max file size: 16MB</small>
+        <!-- Step 2: Choose Method -->
+        <div class="section-title d-flex align-items-center mb-3">
+            <span class="step-badge">2</span>
+            <span style="font-weight: 600; font-size: 1rem;">Choose Entry Method</span>
+        </div>
+
+        <!-- Options Row -->
+        <div class="row g-4">
+            <!-- PDF Upload Option -->
+            <div class="col-md-6">
+                <div class="option-card" id="pdfOption">
+                    <div class="option-icon pdf">
+                        <i class="bi bi-file-earmark-pdf"></i>
+                    </div>
+                    <h3 class="option-title text-center">Upload PDF</h3>
+                    <p class="option-desc text-center">Automatically extract patient data from existing discharge PDF</p>
+                    <ul class="feature-list">
+                        <li><i class="bi bi-check-circle-fill"></i> OpenAI-powered data extraction</li>
+                        <li><i class="bi bi-check-circle-fill"></i> Auto-fills all fields</li>
+                        <li><i class="bi bi-check-circle-fill"></i> Review & edit before generating</li>
+                        <li><i class="bi bi-check-circle-fill"></i> Better support for scanned documents</li>
+                    </ul>
+                    <button type="button" class="btn btn-pdf btn-option" id="uploadPdfBtn" data-bs-toggle="modal" data-bs-target="#uploadModal" disabled>
+                        <i class="bi bi-upload me-2"></i>Upload PDF
+                    </button>
+                </div>
+            </div>
+
+            <!-- Manual Entry Option -->
+            <div class="col-md-6">
+                <div class="option-card" id="manualOption">
+                    <div class="option-icon manual">
+                        <i class="bi bi-pencil-square"></i>
+                    </div>
+                    <h3 class="option-title text-center">Manual Entry</h3>
+                    <p class="option-desc text-center">Type all patient details directly into the form</p>
+                    <ul class="feature-list">
+                        <li><i class="bi bi-check-circle-fill"></i> Full control over all fields</li>
+                        <li><i class="bi bi-check-circle-fill"></i> No PDF required</li>
+                        <li><i class="bi bi-check-circle-fill"></i> Quick data entry interface</li>
+                        <li><i class="bi bi-check-circle-fill"></i> Save time with templates</li>
+                    </ul>
+                    <button type="button" class="btn btn-manual btn-option" id="manualEntryBtn" disabled>
+                        <i class="bi bi-keyboard me-2"></i>Start Manual Entry
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Info -->
+        <div class="text-center mt-4">
+            <small class="text-muted">
+                <i class="bi bi-shield-check me-1"></i>
+                Your data is processed securely and not stored permanently
+            </small>
+        </div>
+    </div>
+
+    <!-- PDF Upload Modal -->
+    <div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="uploadModalLabel">
+                        <i class="bi bi-file-earmark-pdf me-2"></i>Upload Discharge PDF
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                        <input type="hidden" name="selected_doctor" id="selectedDoctorInput">
+                        <input type="hidden" name="template_type" id="templateTypeInput">
+                        
+                        <div class="alert alert-info mb-3" id="modalDoctorInfo">
+                            <i class="bi bi-person-badge me-2"></i>
+                            <strong>Doctor:</strong> <span id="modalDoctorName">-</span> | 
+                            <strong>Template:</strong> <span id="modalTemplateName">-</span>
+                        </div>
+                        
+                        <div class="file-upload-area" id="fileDropArea">
+                            <i class="bi bi-cloud-arrow-up-fill"></i>
+                            <p class="mb-2">Drag & drop your PDF here</p>
+                            <p class="text-muted small mb-0">or click to browse</p>
+                            <input type="file" class="form-control d-none" id="pdf" name="pdf" accept=".pdf" required>
+                            <div id="fileName"></div>
+                        </div>
+                        <small class="text-muted d-block mb-3 text-center">
+                            <i class="bi bi-info-circle me-1"></i>Max file size: 16MB | Supported: PDF only
+                        </small>
+                        <button type="submit" class="btn btn-pdf btn-option" id="submitBtn">
+                            <span id="submitText"><i class="bi bi-magic me-2"></i>Extract & Continue</span>
+                            <div class="spinner-border spinner-border-sm loading-spinner" id="loadingSpinner" role="status">
+                                <span class="visually-hidden">Loading...</span>
                             </div>
-                            <div id="fileName" class="mt-2 fw-bold"></div>
-                        </div>
-
-                        <div class="text-center">
-                            <button type="submit" class="btn btn-primary btn-upload" id="submitBtn">
-                                <span id="submitText">Generate Discharge Summary</span>
-                                <div class="spinner-border spinner-border-sm loading-spinner" id="loadingSpinner" role="status">
-                                    <span class="visually-hidden">Loading...</span>
-                                </div>
-                            </button>
-                        </div>
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Manual Entry Form (hidden) -->
+    <form method="POST" action="{{ url_for('manual_entry') }}" id="manualForm" class="d-none">
+        <input type="hidden" name="selected_doctor" id="manualDoctorInput">
+        <input type="hidden" name="template_type" id="manualTemplateInput">
+    </form>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Doctor templates data from server
+        const doctorsData = {{ doctors | tojson | safe }};
+        
+        // Elements
+        const doctorSelect = document.getElementById('doctorSelect');
+        const templateDefault = document.getElementById('templateDefault');
+        const templateCustom = document.getElementById('templateCustom');
+        const uploadPdfBtn = document.getElementById('uploadPdfBtn');
+        const manualEntryBtn = document.getElementById('manualEntryBtn');
+        const templateStatus = document.getElementById('templateStatus');
+        const templateStatusText = document.getElementById('templateStatusText');
+        
+        // Modal elements
+        const selectedDoctorInput = document.getElementById('selectedDoctorInput');
+        const templateTypeInput = document.getElementById('templateTypeInput');
+        const modalDoctorName = document.getElementById('modalDoctorName');
+        const modalTemplateName = document.getElementById('modalTemplateName');
+        
+        // Manual form elements
+        const manualForm = document.getElementById('manualForm');
+        const manualDoctorInput = document.getElementById('manualDoctorInput');
+        const manualTemplateInput = document.getElementById('manualTemplateInput');
+        
+        // Update buttons state based on selection
+        function updateButtonsState() {
+            const selectedDoctor = doctorSelect.value;
+            const templateType = document.querySelector('input[name="templateType"]:checked').value;
+            
+            if (!selectedDoctor) {
+                uploadPdfBtn.disabled = true;
+                manualEntryBtn.disabled = true;
+                templateStatus.classList.add('d-none');
+                return;
+            }
+            
+            // Check if template exists
+            const doctorInfo = doctorsData[selectedDoctor];
+            const hasTemplate = doctorInfo && doctorInfo.templates && doctorInfo.templates[templateType];
+            
+            if (hasTemplate) {
+                uploadPdfBtn.disabled = false;
+                manualEntryBtn.disabled = false;
+                templateStatus.classList.add('d-none');
+            } else {
+                uploadPdfBtn.disabled = true;
+                manualEntryBtn.disabled = true;
+                templateStatus.classList.remove('d-none');
+                templateStatusText.textContent = `${templateType.charAt(0).toUpperCase() + templateType.slice(1)} template not available for ${selectedDoctor}. Please choose another option.`;
+            }
+            
+            // Update hidden inputs
+            selectedDoctorInput.value = selectedDoctor;
+            templateTypeInput.value = templateType;
+            manualDoctorInput.value = selectedDoctor;
+            manualTemplateInput.value = templateType;
+            
+            // Update modal info
+            modalDoctorName.textContent = selectedDoctor.charAt(0).toUpperCase() + selectedDoctor.slice(1);
+            modalTemplateName.textContent = templateType.charAt(0).toUpperCase() + templateType.slice(1);
+        }
+        
+        // Event listeners for doctor and template selection
+        doctorSelect.addEventListener('change', updateButtonsState);
+        templateDefault.addEventListener('change', updateButtonsState);
+        templateCustom.addEventListener('change', updateButtonsState);
+        
+        // Manual entry button click
+        manualEntryBtn.addEventListener('click', function() {
+            if (!doctorSelect.value) {
+                alert('Please select a doctor first');
+                return;
+            }
+            manualForm.submit();
+        });
+
         // File input handling
         const pdfInput = document.getElementById('pdf');
         const fileDropArea = document.getElementById('fileDropArea');
         const fileName = document.getElementById('fileName');
-
-        pdfInput.addEventListener('change', function() {
-            if (this.files.length > 0) {
-                fileName.textContent = this.files[0].name;
-            }
-        });
-
-        // Drag and drop functionality
-        fileDropArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            fileDropArea.style.borderColor = '#0d6efd';
-            fileDropArea.style.backgroundColor = '#f0f7ff';
-        });
-
-        fileDropArea.addEventListener('dragleave', () => {
-            fileDropArea.style.borderColor = '#dee2e6';
-            fileDropArea.style.backgroundColor = 'white';
-        });
-
-        fileDropArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            fileDropArea.style.borderColor = '#dee2e6';
-            fileDropArea.style.backgroundColor = 'white';
-
-            if (e.dataTransfer.files.length) {
-                pdfInput.files = e.dataTransfer.files;
-                fileName.textContent = e.dataTransfer.files[0].name;
-            }
-        });
-
-        // Form submission loading state
-        const form = document.querySelector('form');
+        const uploadForm = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
         const submitText = document.getElementById('submitText');
         const loadingSpinner = document.getElementById('loadingSpinner');
 
-        form.addEventListener('submit', function() {
-            submitText.textContent = 'Processing...';
+        // Click to browse
+        fileDropArea.addEventListener('click', () => pdfInput.click());
+
+        pdfInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                fileName.innerHTML = '<i class="bi bi-file-earmark-pdf-fill text-danger me-2"></i>' + this.files[0].name;
+                fileDropArea.classList.add('has-file');
+            }
+        });
+
+        // Drag and drop
+        fileDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.add('dragover');
+        });
+
+        fileDropArea.addEventListener('dragleave', () => {
+            fileDropArea.classList.remove('dragover');
+        });
+
+        fileDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                pdfInput.files = e.dataTransfer.files;
+                fileName.innerHTML = '<i class="bi bi-file-earmark-pdf-fill text-danger me-2"></i>' + e.dataTransfer.files[0].name;
+                fileDropArea.classList.add('has-file');
+            }
+        });
+
+        // Form submission
+        uploadForm.addEventListener('submit', function(e) {
+            if (!pdfInput.files.length) {
+                e.preventDefault();
+                alert('Please select a PDF file first');
+                return;
+            }
+            if (!doctorSelect.value) {
+                e.preventDefault();
+                alert('Please select a doctor first');
+                return;
+            }
+            submitText.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Processing...';
             loadingSpinner.style.display = 'inline-block';
             submitBtn.disabled = true;
         });
+
+        // Card hover effects
+        document.querySelectorAll('.option-card').forEach(card => {
+            card.addEventListener('mouseenter', function() {
+                this.classList.add('selected');
+            });
+            card.addEventListener('mouseleave', function() {
+                this.classList.remove('selected');
+            });
+        });
+        
+        // Initialize button state
+        updateButtonsState();
     </script>
 </body>
 </html>

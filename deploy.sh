@@ -55,7 +55,7 @@ pip install -r requirements.txt
 echo -e "${YELLOW}[5/8] Setting up environment variables...${NC}"
 if [ ! -f "$APP_DIR/.env" ]; then
     cp $APP_DIR/env.example $APP_DIR/.env
-    echo -e "${RED}IMPORTANT: Edit /var/www/dsumarry/.env and add your GEMINI_API_KEY and SECRET_KEY${NC}"
+    echo -e "${RED}IMPORTANT: Edit /var/www/dsumarry/.env and add your OPENAI_API_KEY and SECRET_KEY${NC}"
 fi
 chmod 600 $APP_DIR/.env
 
@@ -85,7 +85,7 @@ echo -e "${GREEN}  Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
-echo "1. Edit /var/www/dsumarry/.env with your API keys:"
+echo "1. Edit /var/www/dsumarry/.env with your OpenAI settings:"
 echo "   sudo nano /var/www/dsumarry/.env"
 echo ""
 echo "2. Update nginx.conf with your domain name:"
@@ -104,4 +104,3 @@ echo "Useful commands:"
 echo "  - View logs: sudo journalctl -u dsumarry -f"
 echo "  - Restart app: sudo systemctl restart dsumarry"
 echo "  - Check status: sudo systemctl status dsumarry"
-

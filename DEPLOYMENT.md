@@ -1,11 +1,13 @@
-# Discharge Summary App - Hostinger VPS Deployment Guide
+# Discharge Summary App - VPS Deployment Guide
+
+For AWS-specific deployment paths, see `AWS_DEPLOYMENT.md`.
 
 ## Prerequisites
 
-- A Hostinger VPS with Ubuntu 20.04/22.04 or Debian 11/12
+- A VPS or cloud VM running Ubuntu 20.04/22.04 or Debian 11/12
 - SSH access to your VPS
 - A domain name (optional, but recommended)
-- Your Gemini API key
+- Your OpenAI API key
 
 ---
 
@@ -42,7 +44,8 @@ sudo nano /var/www/dsumarry/.env
 Update these values:
 ```
 SECRET_KEY=generate-a-random-32-character-string
-GEMINI_API_KEY=your-actual-gemini-api-key
+OPENAI_API_KEY=your-actual-openai-api-key
+OPENAI_MODEL=gpt-4.1
 ```
 
 To generate a secure secret key:
@@ -112,7 +115,8 @@ nano .env
 Add your values:
 ```
 SECRET_KEY=your-secret-key-here
-GEMINI_API_KEY=your-gemini-api-key
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4.1
 PORT=8000
 FLASK_ENV=production
 ```
@@ -280,7 +284,7 @@ sudo chmod -R 755 /var/www/dsumarry
 sudo chmod 600 /var/www/dsumarry/.env
 ```
 
-### Gemini API Errors
+### OpenAI API Errors
 
 1. Verify API key in .env file
 2. Check if key has quota remaining
@@ -319,6 +323,7 @@ sudo chmod 600 /var/www/dsumarry/.env
 If you encounter issues:
 1. Check the logs: `sudo journalctl -u dsumarry -f`
 2. Verify all configuration files are correct
-3. Ensure your Gemini API key is valid and has quota
+3. Ensure your OpenAI API key is valid and has quota
+
 
 

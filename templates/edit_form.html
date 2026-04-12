@@ -2,27 +2,264 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Review & Edit Discharge Summary</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if is_manual %}New Discharge Summary{% else %}Review & Edit Discharge Summary{% endif %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background: #f4f6f9; }
+        :root {
+            --primary-color: #0066cc;
+            --primary-dark: #004d99;
+            --primary-gradient: linear-gradient(135deg, #0066cc 0%, #004d99 100%);
+            --success-color: #00a86b;
+            --border-radius: 10px;
+            --card-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            --transition: all 0.2s ease;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body { 
+            background: #f0f4f8;
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1a1a2e;
+            line-height: 1.5;
+        }
         .container { max-width: 1100px; }
-        .card { border: none; box-shadow: 0 10px 25px rgba(0,0,0,0.08); }
-        .card-header { background: linear-gradient(135deg, #0d6efd, #6610f2); color: #fff; }
-        .section-title { font-weight: 600; margin-top: 1rem; margin-bottom: .75rem; }
-        .small-muted { font-size: .875rem; color: #6c757d; }
-        textarea.form-control { min-height: 100px; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-        .sticky-footer { position: sticky; bottom: 0; background: #fff; padding: .75rem; border-top: 1px solid #e9ecef; }
+        .card { 
+            border: none; 
+            box-shadow: var(--card-shadow);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            background: #fff;
+        }
+        .card-header { 
+            background: var(--primary-gradient); 
+            color: #fff;
+            padding: 1.25rem 1.75rem;
+            position: relative;
+        }
+        .card-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            pointer-events: none;
+        }
+        .card-header h3 {
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+            font-size: 1.25rem;
+        }
+        .card-header p {
+            font-size: 0.875rem;
+            opacity: 0.9;
+        }
+        .card-body {
+            padding: 1.75rem;
+        }
+        .section-card {
+            background: #f8fafc;
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.25rem;
+            border: 1px solid #e8ecef;
+        }
+        .section-title { 
+            font-weight: 600; 
+            font-size: 0.95rem;
+            color: #1a1a2e;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #e8ecef;
+        }
+        .section-title i {
+            color: var(--primary-color);
+            font-size: 1.1rem;
+        }
+        .form-label {
+            font-weight: 500;
+            color: #1a1a2e;
+            font-size: 0.8rem;
+            margin-bottom: 0.35rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .form-control, .form-select {
+            border-radius: 6px;
+            border: 1.5px solid #d0d7de;
+            padding: 0.55rem 0.85rem;
+            transition: var(--transition);
+            font-size: 0.9rem;
+            background-color: #fff;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        }
+        .form-control::placeholder {
+            color: #a0aab4;
+            font-size: 0.85rem;
+        }
+        textarea.form-control { 
+            min-height: 90px;
+            resize: vertical;
+            line-height: 1.5;
+        }
+        .small-muted { 
+            font-size: 0.75rem; 
+            color: #6b7785; 
+            margin-top: 0.25rem;
+        }
+        .grid-2 { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 0.875rem; 
+        }
+        .grid-3 { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 0.875rem; 
+        }
+        .grid-4 { 
+            display: grid; 
+            grid-template-columns: repeat(4, 1fr); 
+            gap: 0.875rem; 
+        }
+        .sticky-footer { 
+            position: sticky; 
+            bottom: 0; 
+            background: #fff; 
+            padding: 1rem 1.75rem;
+            border-top: 1px solid #e8ecef;
+            margin: 0 -1.75rem -1.75rem;
+            border-radius: 0 0 var(--border-radius) var(--border-radius);
+            z-index: 10;
+        }
+        .btn {
+            padding: 0.65rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .btn-primary {
+            background: var(--primary-gradient);
+            border: none;
+            color: #fff;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 102, 204, 0.3);
+            background: linear-gradient(135deg, #004d99 0%, #003d7a 100%);
+        }
+        .btn-outline-secondary {
+            border: 1.5px solid #d0d7de;
+            color: #5c6370;
+            background: #fff;
+        }
+        .btn-outline-secondary:hover {
+            background: #f8fafc;
+            border-color: #a0aab4;
+            color: #1a1a2e;
+        }
+        .table {
+            margin-bottom: 0;
+            font-size: 0.875rem;
+        }
+        .table th {
+            background: #e8ecef;
+            font-weight: 600;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: none;
+            padding: 0.6rem 0.5rem;
+            color: #5c6370;
+        }
+        .table td {
+            border: none;
+            padding: 0.4rem 0.35rem;
+            vertical-align: middle;
+        }
+        .table tbody tr {
+            border-bottom: 1px solid #f0f2f5;
+        }
+        .table tbody tr:last-child {
+            border-bottom: none;
+        }
+        .table tbody tr:hover {
+            background: #f8fafc;
+        }
+        .med-row-num {
+            width: 28px;
+            text-align: center;
+            font-weight: 600;
+            color: #8b95a1;
+            font-size: 0.8rem;
+        }
+        .form-control-sm, .form-select-sm {
+            padding: 0.4rem 0.6rem;
+            font-size: 0.8rem;
+            border-radius: 5px;
+        }
+        .required-field::after {
+            content: '*';
+            color: #dc3545;
+            margin-left: 2px;
+        }
+        .alert {
+            border-radius: var(--border-radius);
+            border: none;
+            font-size: 0.875rem;
+            padding: 0.75rem 1rem;
+        }
+        .alert-info {
+            background: rgba(0, 102, 204, 0.08);
+            color: #004d99;
+        }
+        .doctor-info-badge {
+            background: rgba(0, 102, 204, 0.08);
+            border: 1px solid rgba(0, 102, 204, 0.15);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .doctor-info-badge i {
+            color: var(--primary-color);
+            font-size: 1.25rem;
+        }
+        .doctor-info-badge strong {
+            color: var(--primary-dark);
+        }
 
-        /* Mobile responsiveness: collapse grids to single column */
-        @media (max-width: 576px) {
-            .container { padding: 0 0.5rem; }
-            .grid-2, .grid-3 { grid-template-columns: 1fr; }
-            .sticky-footer { position: static; padding: 0; border-top: none; }
-            .btn { width: 100%; }
-            .table-responsive { border-radius: 8px; }
+        @media (max-width: 768px) {
+            .container { padding: 0.75rem; }
+            .card-body { padding: 1rem; }
+            .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+            .sticky-footer { 
+                position: static; 
+                padding: 1rem; 
+                margin: 1rem -1rem -1rem;
+                flex-direction: column;
+            }
+            .btn { width: 100%; justify-content: center; margin-bottom: 0.5rem; }
+            .table-responsive { font-size: 0.8rem; }
+            .section-card { padding: 1rem; }
         }
     </style>
 </head>
@@ -30,8 +267,17 @@
 <div class="container my-4">
     <div class="card">
         <div class="card-header">
-            <h3 class="mb-0">Review & Edit Discharge Summary</h3>
-            <p class="mb-0 small">Confirm and adjust extracted details before generating the document.</p>
+            <h3 class="mb-0">
+                <i class="bi bi-clipboard2-pulse me-2"></i>
+                {% if is_manual %}New Discharge Summary{% else %}Review & Edit Discharge Summary{% endif %}
+            </h3>
+            <p class="mb-0 small opacity-75">
+                {% if is_manual %}
+                    Fill in patient details to generate the discharge document
+                {% else %}
+                    Review extracted data and make any necessary corrections
+                {% endif %}
+            </p>
         </div>
         <div class="card-body">
             {% with messages = get_flashed_messages(with_categories=true) %}
@@ -45,126 +291,333 @@
                 {% endif %}
             {% endwith %}
 
-            <form method="POST" action="{{ url_for('review') }}">
-                <input type="hidden" name="json_data" value='{{ data | tojson | safe }}'>
-                <!-- Medical content only: Diagnosis, Risk Factors, Past History, Chief Complaints, Course -->
-                {% set diag = data.get('Diagnosis', []) %}
-                {% set risk = data.get('Riskfactors', []) %}
-                {% set past = data.get('PastHistory', []) %}
-                {% set course = data.get('Course', []) %}
-
-                <div class="section-title">Diagnosis</div>
-                <textarea class="form-control" name="Diagnosis" placeholder="One item per line">{{ diag if diag is string else '\n'.join(diag or []) }}</textarea>
-
-                <div class="grid-2 mt-3">
+            <form method="POST" action="{{ url_for('review') }}" id="mainForm">
+                <input type="hidden" name="json_data" id="jsonDataField" value='{{ data | tojson | safe }}'>
+                <input type="hidden" name="template_path" value="{{ template_path | default('template.docx') }}">
+                <input type="hidden" name="template_type" value="{{ template_type | default('default') }}">
+                <input type="hidden" name="selected_doctor" value="{{ selected_doctor | default('') }}">
+                <input type="hidden" name="is_manual" value="{{ 'true' if is_manual else 'false' }}">
+                
+                {% if selected_doctor %}
+                <!-- Selected Template Info -->
+                <div class="doctor-info-badge">
+                    <i class="bi bi-person-badge-fill"></i>
                     <div>
-                        <label class="form-label">Risk Factors</label>
-                        <textarea class="form-control" name="Riskfactors" placeholder="One item per line">{{ risk if risk is string else '\n'.join(risk or []) }}</textarea>
+                        <strong>Doctor:</strong> {{ selected_doctor | title }} 
+                        <span class="mx-2">|</span>
+                        <strong>Template:</strong> 
+                        <span class="badge {% if template_type == 'custom' %}bg-success{% else %}bg-primary{% endif %}">
+                            {{ template_type | default('default') | title }}
+                            {% if template_type == 'custom' %}(20 Meds){% else %}(10 Meds){% endif %}
+                        </span>
                     </div>
-                    <div>
-                        <label class="form-label">Past History</label>
-                        <textarea class="form-control" name="PastHistory" placeholder="One item per line">{{ past if past is string else '\n'.join(past or []) }}</textarea>
+                </div>
+                {% endif %}
+
+                <!-- Patient Information Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-person-vcard"></i> Patient Information
+                    </div>
+                    <div class="grid-2 mb-3">
+                        <div>
+                            <label class="form-label required-field">Patient Name</label>
+                            <input type="text" class="form-control" name="name" id="name" 
+                                   value="{{ data.get('name', '') }}" placeholder="Full name" required>
+                        </div>
+                        <div>
+                            <label class="form-label required-field">Age / Gender</label>
+                            <input type="text" class="form-control" name="age_gender" id="age_gender"
+                                   value="{{ data.get('age/gender', '') }}" placeholder="e.g., 45Y/Male">
+                        </div>
+                    </div>
+                    <div class="grid-2 mb-3">
+                        <div>
+                            <label class="form-label">Address Line 1</label>
+                            <input type="text" class="form-control" name="ad1" id="ad1"
+                                   value="{{ data.get('ad1', '') }}" placeholder="Street address">
+                        </div>
+                        <div>
+                            <label class="form-label">Address Line 2</label>
+                            <input type="text" class="form-control" name="ad2" id="ad2"
+                                   value="{{ data.get('ad2', '') }}" placeholder="City, State">
+                        </div>
+                    </div>
+                    <div class="grid-4">
+                        <div>
+                            <label class="form-label">Mobile</label>
+                            <input type="text" class="form-control" name="mob" id="mob"
+                                   value="{{ data.get('mob', '') }}" placeholder="Phone number">
+                        </div>
+                        <div>
+                            <label class="form-label">UMR</label>
+                            <input type="text" class="form-control" name="umr" id="umr"
+                                   value="{{ data.get('umr', '') }}" placeholder="Medical record #">
+                        </div>
+                        <div>
+                            <label class="form-label">Admission #</label>
+                            <input type="text" class="form-control" name="admision_number" id="admision_number"
+                                   value="{{ data.get('admision_number', '') }}" placeholder="Admission number">
+                        </div>
+                        <div>
+                            <label class="form-label">Ward</label>
+                            <input type="text" class="form-control" name="ward" id="ward"
+                                   value="{{ data.get('ward', '') }}" placeholder="Ward name">
+                        </div>
                     </div>
                 </div>
 
-                <div class="section-title mt-3">Chief Complaints</div>
-                <input class="form-control" name="ChiefComplaints" value="{{ data.get('ChiefComplaints', '') }}">
-
-                <div class="section-title mt-3">Course</div>
-                <textarea class="form-control" name="Course" placeholder="One item per line">{{ course if course is string else '\n'.join(course or []) }}</textarea>
-
-                <!-- Vitals -->
-                <div class="section-title">Vitals</div>
-                <div class="grid-3">
-                    <div>
-                        <label class="form-label">TEMP</label>
-                        <input class="form-control" name="TEMP" value="{{ data.get('Vitals', {}).get('TEMP', '') }}">
+                <!-- Admission Details Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-calendar-event"></i> Admission Details
                     </div>
-                    <div>
-                        <label class="form-label">PR</label>
-                        <input class="form-control" name="PR" value="{{ data.get('Vitals', {}).get('PR', '') }}">
-                    </div>
-                    <div>
-                        <label class="form-label">BP</label>
-                        <input class="form-control" name="BP" value="{{ data.get('Vitals', {}).get('BP', '') }}">
-                    </div>
-                    <div>
-                        <label class="form-label">SPo2</label>
-                        <input class="form-control" name="SPo2" value="{{ data.get('Vitals', {}).get('SPo2', '') }}">
-                    </div>
-                    <div>
-                        <label class="form-label">RR</label>
-                        <input class="form-control" name="RR" value="{{ data.get('Vitals', {}).get('RR', '') }}">
+                    <div class="grid-2">
+                        <div>
+                            <label class="form-label required-field">Admission Date</label>
+                            <input type="date" class="form-control" name="admission_date" id="admission_date"
+                                   value="{{ data.get('admission_date', '') }}" required>
+                        </div>
+                        <div>
+                            <label class="form-label required-field">Discharge Date</label>
+                            <input type="date" class="form-control" name="discharge_date" id="discharge_date"
+                                   value="{{ data.get('discharge_date', '') }}" required>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Examination -->
-                <div class="section-title mt-3">Examination</div>
-                <div class="grid-2">
-                    <div>
-                        <label class="form-label">CVS</label>
-                        <input class="form-control" name="CVS" value="{{ data.get('Examination', {}).get('CVS', '') }}">
+                <!-- Clinical Information Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-heart-pulse"></i> Clinical Information
                     </div>
-                    <div>
-                        <label class="form-label">RS</label>
-                        <input class="form-control" name="RS" value="{{ data.get('Examination', {}).get('RS', '') }}">
+                    
+                    {% set diag = data.get('Diagnosis', []) %}
+                    {% set risk = data.get('Riskfactors', []) %}
+                    {% set past = data.get('PastHistory', []) %}
+                    {% set course = data.get('Course', []) %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Diagnosis</label>
+                        <textarea class="form-control" name="Diagnosis" rows="3" 
+                                  placeholder="Enter each diagnosis on a new line">{{ diag if diag is string else '\n'.join(diag or []) }}</textarea>
+                        <small class="small-muted">One diagnosis per line. Include "ADVICE: MEDICAL MANAGEMENT" if applicable.</small>
                     </div>
-                    <div>
-                        <label class="form-label">CNS</label>
-                        <input class="form-control" name="CNS" value="{{ data.get('Examination', {}).get('CNS', '') }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">Chief Complaints</label>
+                        <input type="text" class="form-control" name="ChiefComplaints" 
+                               value="{{ data.get('ChiefComplaints', '') }}" placeholder="Main presenting complaints">
                     </div>
+
+                    <div class="grid-2 mb-3">
+                        <div>
+                            <label class="form-label">Risk Factors</label>
+                            <textarea class="form-control" name="Riskfactors" rows="3" 
+                                      placeholder="One per line">{{ risk if risk is string else '\n'.join(risk or []) }}</textarea>
+                        </div>
+                        <div>
+                            <label class="form-label">Past History</label>
+                            <textarea class="form-control" name="PastHistory" rows="3" 
+                                      placeholder="One per line">{{ past if past is string else '\n'.join(past or []) }}</textarea>
+                        </div>
+                    </div>
+
                     <div>
-                        <label class="form-label">PA</label>
-                        <input class="form-control" name="PA" value="{{ data.get('Examination', {}).get('PA', '') }}">
+                        <label class="form-label">Hospital Course</label>
+                        <textarea class="form-control" name="Course" rows="4" 
+                                  placeholder="Describe the course of treatment">{{ course if course is string else '\n'.join(course or []) }}</textarea>
                     </div>
                 </div>
 
-                <!-- Medications -->
-                <div class="section-title mt-3">Medications</div>
-                <p class="small-muted">Provide up to 10 medications; form can be TAB/CAP/INJ.</p>
-                {% set meds = data.get('Medications', []) %}
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle">
-                        <thead>
-                        <tr>
-                            <th style="width: 12%">Form</th>
-                            <th style="width: 28%">Name</th>
-                            <th style="width: 20%">Dosage</th>
-                            <th style="width: 20%">Frequency</th>
-                            <th style="width: 20%">Time</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {% for i in range(1, 11) %}
-                            {% set m = meds[i-1] if meds|length >= i else {} %}
-                            {% set form_val = (m.get('form','') or '').upper() %}
-                            <tr>
-                                <td>
-                                    <select class="form-control" name="TAB{{ i }}_form">
-                                        <option value=""></option>
-                                        <option value="TAB" {% if form_val == 'TAB' %}selected{% endif %}>TAB</option>
-                                        <option value="CAP" {% if form_val == 'CAP' %}selected{% endif %}>CAP</option>
-                                        <option value="INJ" {% if form_val == 'INJ' %}selected{% endif %}>INJ</option>
-                                    </select>
-                                </td>
-                                <td><input class="form-control" name="TAB{{ i }}_name" value="{{ m.get('name','') }}"></td>
-                                <td><input class="form-control" name="DOSAGE{{ i }}" value="{{ m.get('dosage','') }}"></td>
-                                <td><input class="form-control" name="FREQ{{ i }}" value="{{ m.get('freq','') }}"></td>
-                                <td><input class="form-control" name="TOM{{ i }}" value="{{ m.get('time','') }}"></td>
-                            </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
+                <!-- Vitals Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-activity"></i> Vitals at Discharge
+                    </div>
+                    <div class="grid-3">
+                        <div>
+                            <label class="form-label">Temperature</label>
+                            <input type="text" class="form-control" name="TEMP" 
+                                   value="{{ data.get('Vitals', {}).get('TEMP', '') }}" placeholder="e.g., 98.6°F">
+                        </div>
+                        <div>
+                            <label class="form-label">Pulse Rate</label>
+                            <input type="text" class="form-control" name="PR" 
+                                   value="{{ data.get('Vitals', {}).get('PR', '') }}" placeholder="e.g., 72 bpm">
+                        </div>
+                        <div>
+                            <label class="form-label">Blood Pressure</label>
+                            <input type="text" class="form-control" name="BP" 
+                                   value="{{ data.get('Vitals', {}).get('BP', '') }}" placeholder="e.g., 120/80">
+                        </div>
+                        <div>
+                            <label class="form-label">SpO2</label>
+                            <input type="text" class="form-control" name="SPo2" 
+                                   value="{{ data.get('Vitals', {}).get('SPo2', '') }}" placeholder="e.g., 98%">
+                        </div>
+                        <div>
+                            <label class="form-label">Respiratory Rate</label>
+                            <input type="text" class="form-control" name="RR" 
+                                   value="{{ data.get('Vitals', {}).get('RR', '') }}" placeholder="e.g., 16/min">
+                        </div>
+                    </div>
                 </div>
 
-                <div class="sticky-footer d-flex justify-content-end gap-2 mt-3">
-                    <a class="btn btn-outline-secondary" href="{{ url_for('home') }}">Back</a>
-                    <button class="btn btn-primary" type="submit">Generate Document</button>
+                <!-- Examination Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-clipboard2-check"></i> Physical Examination
+                    </div>
+                    <div class="grid-2">
+                        <div>
+                            <label class="form-label">CVS</label>
+                            <input type="text" class="form-control" name="CVS" 
+                                   value="{{ data.get('Examination', {}).get('CVS', '') }}" placeholder="Cardiovascular findings">
+                        </div>
+                        <div>
+                            <label class="form-label">RS</label>
+                            <input type="text" class="form-control" name="RS" 
+                                   value="{{ data.get('Examination', {}).get('RS', '') }}" placeholder="Respiratory findings">
+                        </div>
+                        <div>
+                            <label class="form-label">CNS</label>
+                            <input type="text" class="form-control" name="CNS" 
+                                   value="{{ data.get('Examination', {}).get('CNS', '') }}" placeholder="Neurological findings">
+                        </div>
+                        <div>
+                            <label class="form-label">P/A</label>
+                            <input type="text" class="form-control" name="PA" 
+                                   value="{{ data.get('Examination', {}).get('PA', '') }}" placeholder="Abdominal findings">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cross Consultations Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-people"></i> Cross Consultations
+                    </div>
+                    <p class="small-muted mb-3">Enter up to 4 consulting doctors involved in patient care</p>
+                    <div class="grid-2">
+                        <div>
+                            <label class="form-label">Cross Consultation 1</label>
+                            <input type="text" class="form-control" name="cross1" 
+                                   value="{{ data.get('cross1', '') }}" placeholder="Dr. Name / Specialty">
+                        </div>
+                        <div>
+                            <label class="form-label">Cross Consultation 2</label>
+                            <input type="text" class="form-control" name="cross2" 
+                                   value="{{ data.get('cross2', '') }}" placeholder="Dr. Name / Specialty">
+                        </div>
+                        <div>
+                            <label class="form-label">Cross Consultation 3</label>
+                            <input type="text" class="form-control" name="cross3" 
+                                   value="{{ data.get('cross3', '') }}" placeholder="Dr. Name / Specialty">
+                        </div>
+                        <div>
+                            <label class="form-label">Cross Consultation 4</label>
+                            <input type="text" class="form-control" name="cross4" 
+                                   value="{{ data.get('cross4', '') }}" placeholder="Dr. Name / Specialty">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Medications Section -->
+                <div class="section-card">
+                    <div class="section-title">
+                        <i class="bi bi-capsule"></i> Discharge Medications
+                    </div>
+                    {% set max_meds = 20 if template_type == 'custom' else 10 %}
+                    <p class="small-muted mb-3">Enter up to {{ max_meds }} medications. Form options: TAB (Tablet), CAP (Capsule), INJ (Injection), SYP (Syrup), DROP</p>
+                    
+                    {% set meds = data.get('Medications', []) %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th class="med-row-num">#</th>
+                                    <th style="width: 12%">Form</th>
+                                    <th style="width: 25%">Medicine Name</th>
+                                    <th style="width: 15%">Dosage</th>
+                                    <th style="width: 20%">Frequency</th>
+                                    <th style="width: 20%">Timing</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for i in range(1, max_meds + 1) %}
+                                {% set m = meds[i-1] if meds|length >= i else {} %}
+                                {% set form_val = (m.get('form','') or '').upper() %}
+                                <tr>
+                                    <td class="med-row-num">{{ i }}</td>
+                                    <td>
+                                        <select class="form-select form-select-sm" name="TAB{{ i }}_form">
+                                            <option value="">--</option>
+                                            <option value="TAB" {% if form_val == 'TAB' %}selected{% endif %}>TAB</option>
+                                            <option value="CAP" {% if form_val == 'CAP' %}selected{% endif %}>CAP</option>
+                                            <option value="INJ" {% if form_val == 'INJ' %}selected{% endif %}>INJ</option>
+                                            <option value="SYP" {% if form_val == 'SYP' %}selected{% endif %}>SYP</option>
+                                            <option value="DROP" {% if form_val == 'DROP' %}selected{% endif %}>DROP</option>
+                                        </select>
+                                    </td>
+                                    <td><input type="text" class="form-control form-control-sm" name="TAB{{ i }}_name" value="{{ m.get('name','') }}" placeholder="Medicine name"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="DOSAGE{{ i }}" value="{{ m.get('dosage','') }}" placeholder="e.g., 500mg"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="FREQ{{ i }}" value="{{ m.get('freq','') }}" placeholder="e.g., Twice daily"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="TOM{{ i }}" value="{{ m.get('time','') }}" placeholder="e.g., After food"></td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Footer Actions -->
+                <div class="sticky-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <a class="btn btn-outline-secondary" href="{{ url_for('home') }}">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Home
+                    </a>
+                    <button class="btn btn-primary" type="submit" id="generateBtn">
+                        <i class="bi bi-file-earmark-word me-2"></i>Generate Document
+                        <span class="spinner-border spinner-border-sm ms-2 d-none" id="generateSpinner"></span>
+                    </button>
                 </div>
             </form>
         </div>
     </div>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Update hidden JSON field before form submission with all patient info
+    document.getElementById('mainForm').addEventListener('submit', function(e) {
+        // Show loading spinner
+        document.getElementById('generateBtn').disabled = true;
+        document.getElementById('generateSpinner').classList.remove('d-none');
+        
+        // Build updated JSON data with form field values
+        const currentData = JSON.parse(document.getElementById('jsonDataField').value || '{}');
+        
+        // Update patient info fields in JSON
+        currentData['name'] = document.getElementById('name').value;
+        currentData['age/gender'] = document.getElementById('age_gender').value;
+        currentData['ad1'] = document.getElementById('ad1').value;
+        currentData['ad2'] = document.getElementById('ad2').value;
+        currentData['mob'] = document.getElementById('mob').value;
+        currentData['umr'] = document.getElementById('umr').value;
+        currentData['admision_number'] = document.getElementById('admision_number').value;
+        currentData['ward'] = document.getElementById('ward').value;
+        currentData['admission_date'] = document.getElementById('admission_date').value;
+        currentData['discharge_date'] = document.getElementById('discharge_date').value;
+        
+        // Update cross match fields
+        currentData['cross1'] = document.querySelector('[name="cross1"]').value;
+        currentData['cross2'] = document.querySelector('[name="cross2"]').value;
+        currentData['cross3'] = document.querySelector('[name="cross3"]').value;
+        currentData['cross4'] = document.querySelector('[name="cross4"]').value;
+        
+        // Update hidden field
+        document.getElementById('jsonDataField').value = JSON.stringify(currentData);
+    });
+</script>
 </body>
 </html>
