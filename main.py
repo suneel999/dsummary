@@ -26,6 +26,8 @@ DEFAULT_TEMPLATE_PATH = APP_ROOT / "template.docx"
 ALLOWED_EXTENSIONS = {"pdf"}
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_OPENAI_MODEL = "gpt-4.1"
+GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "16"))
 
 EMPTY_PATIENT_DATA = {
@@ -418,7 +420,7 @@ def model_allows_custom_temperature(model):
 
 
 def openai_http_status(exc):
-    match = re.search(r"OpenAI API error \((\d+)\)", str(exc))
+    match = re.search(r"(?:OpenAI|Gemini) API error \((\d+)\)", str(exc))
     return int(match.group(1)) if match else None
 
 
@@ -435,9 +437,9 @@ def raise_for_openai_response(response):
 
 def public_extraction_error(exc):
     message = normalize_string(str(exc))
-    if message.startswith("OpenAI API error") or message.startswith("Missing OPENAI_API_KEY"):
+    if message.startswith(("OpenAI API error", "Gemini API error", "Missing OPENAI_API_KEY", "Missing GEMINI_API_KEY")):
         return message[:500]
-    return "OpenAI could not extract structured data from this PDF. Please try another PDF or use manual entry."
+    return "The model could not extract structured data from this PDF. Please try another PDF or use manual entry."
 
 
 def call_openai(messages, response_format, timeout=90):
@@ -539,9 +541,173 @@ def get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=
             detail = text_error if str(text_error).startswith("OpenAI API error") else pdf_error
             if str(detail).startswith("OpenAI API error") or str(detail).startswith("Missing OPENAI_API_KEY"):
                 raise RuntimeError(public_extraction_error(detail)) from text_error
+            raise RuntimeError(public_extraction_error(text_error)) from text_error
+
+
+def get_llm_provider():
+    load_dotenv(override=True)
+    provider = normalize_string(os.getenv("LLM_PROVIDER")).lower()
+    if provider in {"gemini", "google"}:
+        return "gemini"
+    return "openai"
+
+
+def get_gemini_settings():
+    load_dotenv(override=True)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY environment variable")
+    return api_key, model
+
+
+def gemini_error_message(response):
+    try:
+        body = response.json()
+        error = body.get("error", {})
+        return error.get("message") or response.text
+    except ValueError:
+        return response.text
+
+
+def gemini_generation_config(include_thinking):
+    config = {
+        "responseFormat": {
+            "text": {
+                "mimeType": "APPLICATION_JSON",
+                "schema": DISCHARGE_SUMMARY_SCHEMA,
+            }
+        }
+    }
+    if include_thinking:
+        config["thinkingConfig"] = {"thinkingLevel": "LOW"}
+    return config
+
+
+def extract_gemini_text(response_data):
+    candidates = response_data.get("candidates") or []
+    if not candidates:
+        feedback = response_data.get("promptFeedback") or response_data
+        raise RuntimeError(f"Gemini API error: {feedback}")
+
+    text_parts = []
+    for part in candidates[0].get("content", {}).get("parts") or []:
+        if part.get("thought"):
+            continue
+        text = part.get("text")
+        if text:
+            text_parts.append(text)
+    if text_parts:
+        return "\n".join(text_parts).strip()
+    raise RuntimeError("Gemini returned an empty response")
+
+
+def call_gemini(parts, timeout=90):
+    api_key, model = get_gemini_settings()
+    url = GEMINI_GENERATE_URL.format(model=model)
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    include_thinking = True
+    last_error = None
+
+    for _attempt in range(2):
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": gemini_generation_config(include_thinking),
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if response.ok:
+            return extract_gemini_text(response.json())
+
+        error_message = gemini_error_message(response)
+        last_error = RuntimeError(f"Gemini API error ({response.status_code}): {error_message}")
+        if include_thinking and response.status_code == 400 and "thinking" in error_message.lower():
+            include_thinking = False
+            continue
+        raise last_error
+
+    raise last_error or RuntimeError("Gemini extraction failed")
+
+
+def request_gemini_json(parts, max_retries=3, base_delay=2):
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            raw_text = call_gemini(parts)
+            return normalize_json_data(parse_json_response(raw_text))
+        except Exception as exc:
+            last_error = exc
+            status = openai_http_status(exc)
+            if status in {400, 401, 403, 404}:
+                raise
+            if attempt >= max_retries - 1:
+                break
+            time.sleep((base_delay * (2 ** attempt)) + random.uniform(0, 1))
+    raise last_error or RuntimeError("Gemini extraction failed")
+
+
+def gemini_parts_for_pdf(pdf_bytes):
+    prompt = f"{OPENAI_SYSTEM_PROMPT}\n\n{OPENAI_USER_PROMPT}"
+    return [
+        {
+            "inline_data": {
+                "mime_type": "application/pdf",
+                "data": base64.b64encode(pdf_bytes).decode("utf-8"),
+            }
+        },
+        {"text": prompt},
+    ]
+
+
+def gemini_parts_for_text(pdf_text):
+    prompt = f"{OPENAI_SYSTEM_PROMPT}\n\n{OPENAI_USER_PROMPT}\n\nPDF text:\n\"\"\"\n{pdf_text}\n\"\"\""
+    return [{"text": prompt}]
+
+
+def get_json_from_pdf_via_gemini(pdf_bytes, filename, max_retries=3, base_delay=2):
+    try:
+        return request_gemini_json(
+            gemini_parts_for_pdf(pdf_bytes),
+            max_retries=max_retries,
+            base_delay=base_delay,
+        )
+    except Exception as pdf_error:
+        app.logger.warning("Gemini PDF extraction failed for %s: %s", filename, pdf_error)
+        status = openai_http_status(pdf_error)
+        if status in {401, 403} or "Missing GEMINI_API_KEY" in str(pdf_error):
+            raise RuntimeError(public_extraction_error(pdf_error)) from pdf_error
+
+        pdf_text = extract_text_from_pdf(pdf_bytes)
+        if not pdf_text:
+            if str(pdf_error).startswith("Gemini API error"):
+                raise RuntimeError(public_extraction_error(pdf_error)) from pdf_error
             raise RuntimeError(
-                "OpenAI could not extract structured data from this PDF. Please try another PDF or use manual entry."
-            ) from text_error
+                "The model could not read this PDF. Please try a clearer PDF or use manual entry."
+            ) from pdf_error
+
+        try:
+            return request_gemini_json(
+                gemini_parts_for_text(pdf_text),
+                max_retries=max_retries,
+                base_delay=base_delay,
+            )
+        except Exception as text_error:
+            app.logger.error(
+                "Gemini extraction failed for %s. PDF input error: %s | Text fallback error: %s",
+                filename,
+                pdf_error,
+                text_error,
+            )
+            detail = text_error if str(text_error).startswith("Gemini API error") else pdf_error
+            raise RuntimeError(public_extraction_error(detail)) from text_error
+
+
+def get_json_from_pdf(pdf_bytes, filename):
+    if get_llm_provider() == "gemini":
+        return get_json_from_pdf_via_gemini(pdf_bytes, filename)
+    return get_json_from_pdf_via_openai(pdf_bytes, filename)
 
 
 def format_multiline_field(content):
@@ -672,7 +838,7 @@ def home():
             if not pdf_bytes:
                 raise ValueError("The uploaded PDF is empty")
 
-            json_data = get_json_from_pdf_via_openai(pdf_bytes, filename)
+            json_data = get_json_from_pdf(pdf_bytes, filename)
             flash("PDF processed successfully! Please review and edit before generating.", "success")
             return render_template(
                 "edit_form.html",
