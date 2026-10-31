@@ -411,20 +411,18 @@ def parse_json_response(raw_text):
         return json.loads(match.group(0))
 
 
-def call_openai(messages, response_format, timeout=90):
-    api_key, model = get_openai_settings()
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "temperature": 0,
-        "messages": messages,
-        "response_format": response_format,
-    }
+def model_allows_custom_temperature(model):
+    name = normalize_string(model).lower()
+    blocked_prefixes = ("gpt-4.1", "gpt-5", "gpt-6", "o1", "o3", "o4")
+    return not name.startswith(blocked_prefixes)
 
-    response = requests.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload, timeout=timeout)
+
+def openai_http_status(exc):
+    match = re.search(r"OpenAI API error \((\d+)\)", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def raise_for_openai_response(response):
     if response.ok:
         return response.json()
 
@@ -433,6 +431,41 @@ def call_openai(messages, response_format, timeout=90):
     except ValueError:
         error_message = response.text
     raise RuntimeError(f"OpenAI API error ({response.status_code}): {error_message}")
+
+
+def public_extraction_error(exc):
+    message = normalize_string(str(exc))
+    if message.startswith("OpenAI API error") or message.startswith("Missing OPENAI_API_KEY"):
+        return message[:500]
+    return "OpenAI could not extract structured data from this PDF. Please try another PDF or use manual entry."
+
+
+def call_openai(messages, response_format, timeout=90):
+    api_key, model = get_openai_settings()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "response_format": response_format,
+    }
+    if model_allows_custom_temperature(model):
+        payload["temperature"] = 0
+
+    response = requests.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload, timeout=timeout)
+    try:
+        return raise_for_openai_response(response)
+    except RuntimeError as exc:
+        if "temperature" not in payload:
+            raise
+        error_text = str(exc).lower()
+        if "temperature" in error_text and "unsupported" in error_text:
+            payload.pop("temperature", None)
+            response = requests.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload, timeout=timeout)
+            return raise_for_openai_response(response)
+        raise
 
 
 def request_openai_json(messages, max_retries=3, base_delay=2):
@@ -450,17 +483,22 @@ def request_openai_json(messages, max_retries=3, base_delay=2):
                 return normalize_json_data(parsed)
             except Exception as exc:
                 last_error = exc
-                if attempt < max_retries - 1:
-                    sleep_time = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
-                    app.logger.warning(
-                        "OpenAI extraction attempt %s failed with %s. Retrying in %.2fs.",
-                        attempt + 1,
-                        response_format["type"],
-                        sleep_time,
-                    )
-                    time.sleep(sleep_time)
-                else:
+                status = openai_http_status(exc)
+                if status in {401, 403}:
+                    raise
+                permanent_request_error = status is not None and status not in {408, 409, 429} and status < 500
+                if permanent_request_error or attempt >= max_retries - 1:
                     app.logger.warning("OpenAI extraction failed with %s: %s", response_format["type"], exc)
+                    break
+
+                sleep_time = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+                app.logger.warning(
+                    "OpenAI extraction attempt %s failed with %s. Retrying in %.2fs.",
+                    attempt + 1,
+                    response_format["type"],
+                    sleep_time,
+                )
+                time.sleep(sleep_time)
 
     raise last_error or RuntimeError("OpenAI extraction failed")
 
@@ -474,8 +512,13 @@ def get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=
         )
     except Exception as pdf_error:
         app.logger.warning("OpenAI PDF extraction failed for %s: %s", filename, pdf_error)
+        if openai_http_status(pdf_error) in {401, 403} or "Missing OPENAI_API_KEY" in str(pdf_error):
+            raise RuntimeError(public_extraction_error(pdf_error)) from pdf_error
+
         pdf_text = extract_text_from_pdf(pdf_bytes)
         if not pdf_text:
+            if str(pdf_error).startswith("OpenAI API error"):
+                raise RuntimeError(public_extraction_error(pdf_error)) from pdf_error
             raise RuntimeError(
                 "OpenAI could not read this PDF. Please try a clearer PDF or use manual entry."
             ) from pdf_error
@@ -493,6 +536,9 @@ def get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=
                 pdf_error,
                 text_error,
             )
+            detail = text_error if str(text_error).startswith("OpenAI API error") else pdf_error
+            if str(detail).startswith("OpenAI API error") or str(detail).startswith("Missing OPENAI_API_KEY"):
+                raise RuntimeError(public_extraction_error(detail)) from text_error
             raise RuntimeError(
                 "OpenAI could not extract structured data from this PDF. Please try another PDF or use manual entry."
             ) from text_error
