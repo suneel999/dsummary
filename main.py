@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pdfplumber
 import requests
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docxtpl import DocxTemplate
+
+from layout_fit import fit_report_boxes
+from pdf_convert import ConversionUnavailable, docx_to_pdf
 from dotenv import load_dotenv
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -60,6 +65,7 @@ EMPTY_PATIENT_DATA = {
         "PA": "",
     },
     "Medications": [],
+    "MedicationNotes": [],
     "cross1": "",
     "cross2": "",
     "cross3": "",
@@ -123,6 +129,7 @@ DISCHARGE_SUMMARY_SCHEMA = {
                 "required": ["form", "name", "dosage", "freq", "time"],
             },
         },
+        "MedicationNotes": {"type": "array", "items": {"type": "string"}},
         "cross1": {"type": "string"},
         "cross2": {"type": "string"},
         "cross3": {"type": "string"},
@@ -147,6 +154,7 @@ DISCHARGE_SUMMARY_SCHEMA = {
         "Vitals",
         "Examination",
         "Medications",
+        "MedicationNotes",
         "cross1",
         "cross2",
         "cross3",
@@ -173,8 +181,10 @@ Rules:
 4. Separate Riskfactors and PastHistory even if the source combines them.
 5. Extract every medication you can find.
 6. Keep medicine forms like TAB, CAP, INJ, SYP, and DROP when present.
-7. Extract all cross consultation doctor names exactly as written.
-8. Output JSON only.
+7. cross1-cross4: fill ONLY from a section whose heading is "Cross Consultation(s)" / "Cross Consultant(s)" / "Cross Consults", copying each doctor exactly as written (one per field). If the document has no such heading, leave all four empty (""). Never use the treating/consultant doctors, referring doctor or signature names for these fields.
+8. Course: one array item per paragraph exactly as the source divides it into paragraphs (usually 2-3). Keep all sentences of a paragraph together in one item, and join lines the PDF wrapped in the middle of a sentence. Do not split a paragraph into separate sentences. Do not include bullet symbols or numbering.
+9. MedicationNotes: instruction lines written directly below the discharge medication list (for example "Continue old diabetic medications as earlier"), copied as written. Use [] if there are none. Do not put follow-up, review or diet advice here.
+10. Output JSON only.
 """.strip()
 
 app = Flask(__name__)
@@ -255,6 +265,7 @@ def normalize_json_data(data):
             "Vitals": normalize_nested_fields(data.get("Vitals"), ["TEMP", "PR", "BP", "SPo2", "RR"]),
             "Examination": normalize_nested_fields(data.get("Examination"), ["CVS", "RS", "CNS", "PA"]),
             "Medications": normalize_medications(data.get("Medications")),
+            "MedicationNotes": normalize_string_list(data.get("MedicationNotes")),
             "cross1": normalize_string(data.get("cross1")),
             "cross2": normalize_string(data.get("cross2")),
             "cross3": normalize_string(data.get("cross3")),
@@ -505,7 +516,33 @@ def request_openai_json(messages, max_retries=3, base_delay=2):
     raise last_error or RuntimeError("OpenAI extraction failed")
 
 
+CROSS_CONSULTATION_HEADING_RE = re.compile(r"cross[\s\-_.]*consult", re.IGNORECASE)
+
+
+def apply_cross_consultation_rule(data, pdf_bytes):
+    """Keep cross consultants only when the source PDF has a "Cross Consultation" heading.
+
+    Scanned PDFs have no extractable text; then the AI result (bound by the same rule in its
+    prompt) is kept as is.
+    """
+    try:
+        pdf_text = extract_text_from_pdf(pdf_bytes)
+    except Exception as exc:
+        app.logger.warning("Could not read PDF text for cross consultation check: %s", exc)
+        return data
+
+    if pdf_text.strip() and not CROSS_CONSULTATION_HEADING_RE.search(pdf_text):
+        for index in range(1, 5):
+            data[f"cross{index}"] = ""
+    return data
+
+
 def get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=2):
+    data = _get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=max_retries, base_delay=base_delay)
+    return apply_cross_consultation_rule(data, pdf_bytes)
+
+
+def _get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=2):
     try:
         return request_openai_json(
             build_openai_messages(filename=filename, pdf_bytes=pdf_bytes),
@@ -739,6 +776,426 @@ def get_max_medications(template_type):
     return 20 if template_type == "custom" else 10
 
 
+COURSE_MARKER = "@@COURSE_BLOCK@@"
+CHIEF_COMPLAINTS_MARKER = "@@CHIEF_COMPLAINTS_BLOCK@@"
+DIAGNOSIS_MARKER = "@@DIAGNOSIS_BLOCK@@"
+RISKFACTORS_MARKER = "@@RISKFACTORS_BLOCK@@"
+# Diagnosis / Risk factor lists: identical margins in both boxes. Each item starts at 17pt,
+# lines that wrap continue 10pt further in, so separate items stay easy to tell apart.
+LIST_BOX_INDENT = (540, 200, 140)  # (left, hanging, right) in twips
+LIST_ITEM_GAP_TWIPS = 30  # 1.5pt between items
+CHIEF_COMPLAINTS_RIGHT_INDENT_TWIPS = 460  # 23pt: text box overhangs its background by ~5pt
+MEDICATION_NOTE_TEMPLATE_TEXT = "CONTINUE OLD DIABETIC"
+MEDICATION_NOTE_GAP_TWIPS = 160  # ~8pt gap between last medicine row and the note
+LEADING_BULLET_RE = re.compile(r"^\s*(?:[-*•●▪■‣⁃➢➤·>]+|\(?\d{1,2}[.)]|\(?[a-zA-Z][.)](?=\s))\s*")
+TERMINAL_PUNCTUATION = (".", "!", "?", ":", ";")
+
+
+def clean_course_items(items):
+    """Normalize course lines so the report lays them out consistently.
+
+    Strips bullets/numbering copied from the source, collapses stray whitespace,
+    and re-joins lines that the source PDF wrapped in the middle of a sentence.
+    """
+    cleaned = []
+    for raw in items or []:
+        for line in str(raw).splitlines():
+            text = re.sub(r"\s+", " ", line.replace(" ", " ")).strip()
+            text = LEADING_BULLET_RE.sub("", text, count=1).strip()
+            if not text:
+                continue
+            starts_lower = text[0].islower() or text[0] in ",)&"
+            if cleaned and starts_lower and not cleaned[-1].endswith(TERMINAL_PUNCTUATION):
+                cleaned[-1] = f"{cleaned[-1]} {text}"
+            else:
+                cleaned.append(text)
+    return cleaned
+
+
+def _paragraph_text(paragraph_el):
+    return "".join(t.text or "" for t in paragraph_el.iter(qn("w:t")))
+
+
+COURSE_PARAGRAPH_GAP_TWIPS = 120  # ~6pt between course paragraphs
+
+
+def parse_course_text(text):
+    """Split the Course textarea into paragraphs.
+
+    Blank lines separate paragraphs; lines inside a paragraph are joined. Without any blank
+    line, each line is treated as its own paragraph (wrapped lines are re-joined later).
+    """
+    text = str(text or "").replace("\r\n", "\n").strip()
+    if not text:
+        return []
+    blocks = [block for block in re.split(r"\n\s*\n", text) if block.strip()]
+    if len(blocks) > 1:
+        return [" ".join(line.strip() for line in block.splitlines() if line.strip()) for block in blocks]
+    return parse_multiline(text)
+
+
+def finalize_course_paragraphs(items):
+    """Drop empty paragraphs. Text is kept exactly as in the source (nothing is added)."""
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def _set_paragraph_layout(paragraph_el, justify="both", space_before=0, space_after=0, right_indent=0, indent=None):
+    """Plain paragraph layout: no indents/numbering, consistent spacing and justification."""
+    p_pr = paragraph_el.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = OxmlElement("w:pPr")
+        paragraph_el.insert(0, p_pr)
+
+    for tag in ("w:ind", "w:jc", "w:spacing", "w:numPr", "w:tabs"):
+        for existing in p_pr.findall(qn(tag)):
+            p_pr.remove(existing)
+
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), str(space_before))
+    spacing.set(qn("w:after"), str(space_after))
+    spacing.set(qn("w:line"), "276")
+    spacing.set(qn("w:lineRule"), "auto")
+    ind = OxmlElement("w:ind")
+    if indent:
+        # indent = (left, hanging, right) in twips; wrapped lines start at `left`,
+        # the first line starts `hanging` further out.
+        left, hanging, right = indent
+        ind.set(qn("w:left"), str(left))
+        ind.set(qn("w:right"), str(right))
+        ind.set(qn("w:hanging"), str(hanging))
+    else:
+        ind.set(qn("w:left"), "0")
+        ind.set(qn("w:right"), str(right_indent))
+        ind.set(qn("w:firstLine"), "0")
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), justify)
+
+    # Keep schema order: ... spacing, ind, ... jc ... rPr (last)
+    r_pr = p_pr.find(qn("w:rPr"))
+    for element in (spacing, ind, jc):
+        if r_pr is not None:
+            r_pr.addprevious(element)
+        else:
+            p_pr.append(element)
+
+
+def _make_text_run(text, run_props=None):
+    run = OxmlElement("w:r")
+    if run_props is not None:
+        run.append(deepcopy(run_props))
+    text_el = OxmlElement("w:t")
+    text_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    text_el.text = text
+    run.append(text_el)
+    return run
+
+
+def render_course_block(
+    document,
+    course_items,
+    marker=COURSE_MARKER,
+    right_indent=0,
+    justify="both",
+    paragraph_gap=COURSE_PARAGRAPH_GAP_TWIPS,
+    indent=None,
+):
+    """Replace the marker with the given text written as paragraph(s).
+
+    Returns one list of created paragraphs per marker occurrence (a text box usually has a
+    modern copy and a legacy fallback copy), so the caller can fit them to their box.
+    """
+    created = []
+    body = document.element.body
+    # Only paragraphs whose *own* runs hold the marker; the outer paragraph that anchors
+    # the text box also contains the marker text through its nested drawing.
+    targets = [
+        p
+        for p in body.iter(qn("w:p"))
+        if marker in "".join(t.text or "" for t in p.findall(f"{qn('w:r')}/{qn('w:t')}"))
+    ]
+
+    for template_p in targets:
+        runs = template_p.findall(qn("w:r"))
+        marker_run = next((r for r in runs if marker in _paragraph_text(r)), runs[0] if runs else None)
+        run_props = marker_run.find(qn("w:rPr")) if marker_run is not None else None
+
+        for child in list(template_p):
+            if child.tag != qn("w:pPr"):
+                template_p.remove(child)
+
+        blank_paragraph = deepcopy(template_p)
+        paragraphs = finalize_course_paragraphs(course_items) or [""]
+        anchor = template_p
+        group = []
+        for index, text in enumerate(paragraphs):
+            paragraph_el = template_p if index == 0 else deepcopy(blank_paragraph)
+            is_last = index == len(paragraphs) - 1
+            _set_paragraph_layout(
+                paragraph_el,
+                justify=justify,
+                space_after=0 if is_last else paragraph_gap,
+                right_indent=right_indent,
+                indent=indent,
+            )
+            if text:
+                paragraph_el.append(_make_text_run(text, run_props))
+            if index:
+                anchor.addnext(paragraph_el)
+                anchor = paragraph_el
+            group.append(paragraph_el)
+        created.append(group)
+
+    return created
+
+
+def clean_chief_complaints(text):
+    """One clean uppercase line of text: no stray spaces, tabs or source line breaks."""
+    text = re.sub(r"\s+", " ", str(text or "").replace("\u00a0", " ")).strip()
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    return text.upper()
+
+
+EMU_PER_PT = 12700
+CROSS_REMOVED_TOP_GAP_PT = 10  # breathing room under the Consultants box
+VML_NS = "urn:schemas-microsoft-com:vml"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+
+
+def _top_level_anchors(document):
+    """Floating shapes anchored directly in the document (not nested inside other shapes)."""
+    anchors = []
+    for anchor in document.element.body.iter(f"{{{WP_NS}}}anchor"):
+        parent = anchor.getparent()
+        nested = False
+        while parent is not None:
+            if parent.tag == f"{{{WP_NS}}}anchor" or parent.tag == qn("w:txbxContent"):
+                nested = True
+                break
+            parent = parent.getparent()
+        if not nested:
+            anchors.append(anchor)
+    return anchors
+
+
+def _find_anchor(anchors, *labels):
+    for anchor in anchors:
+        text = "".join(t.text or "" for t in anchor.iter(qn("w:t")))
+        if all(label in text for label in labels):
+            return anchor
+    return None
+
+
+def _anchor_top(anchor):
+    pos_v = anchor.find(f"{{{WP_NS}}}positionV")
+    if pos_v is None or pos_v.get("relativeFrom") != "page":
+        return None
+    offset = pos_v.find(f"{{{WP_NS}}}posOffset")
+    return int(offset.text) if offset is not None and offset.text else None
+
+
+def _alternate_content(anchor):
+    parent = anchor.getparent()
+    while parent is not None and parent.tag != f"{{{MC_NS}}}AlternateContent":
+        parent = parent.getparent()
+    return parent
+
+
+def _set_anchor_top(anchor, top_emu):
+    """Move a page-anchored shape (and its legacy VML fallback copy) to a new top position."""
+    anchor.find(f"{{{WP_NS}}}positionV").find(f"{{{WP_NS}}}posOffset").text = str(int(top_emu))
+    alt = _alternate_content(anchor)
+    if alt is None:
+        return
+    fallback = alt.find(f"{{{MC_NS}}}Fallback")
+    if fallback is None:
+        return
+    top_pt = f"{top_emu / EMU_PER_PT:.2f}".rstrip("0").rstrip(".")
+    for shape in fallback.iter():
+        style = shape.get("style")
+        if shape.tag.startswith(f"{{{VML_NS}}}") and style and "margin-top:" in style:
+            shape.set("style", re.sub(r"margin-top:[-\d.]+pt", f"margin-top:{top_pt}pt", style, count=1))
+            break
+
+
+def arrange_cross_consultation_box(document, has_cross_consultants):
+    """Remove the empty Cross Consultants box and pull the boxes below it up.
+
+    Diagnosis and Risk Factors / Treatment Plan are always top-aligned with each other. Without
+    cross consultants they move up to where the Cross Consultants box started.
+    """
+    anchors = _top_level_anchors(document)
+    cross = _find_anchor(anchors, "Cross", "Consultants")
+    diagnosis = _find_anchor(anchors, "Diagnosis:")
+    risk = _find_anchor(anchors, "Risk Factors")
+    if diagnosis is None or _anchor_top(diagnosis) is None:
+        return
+
+    new_top = _anchor_top(diagnosis)
+    if not has_cross_consultants and cross is not None and _anchor_top(cross) is not None:
+        new_top = _anchor_top(cross) + CROSS_REMOVED_TOP_GAP_PT * EMU_PER_PT
+        holder = _alternate_content(cross)
+        if holder is None:
+            holder = cross.getparent()  # w:drawing
+        holder.getparent().remove(holder)
+
+    _set_anchor_top(diagnosis, new_top)
+    if risk is not None and _anchor_top(risk) is not None:
+        _set_anchor_top(risk, new_top)
+
+
+def _find_medication_table(document):
+    for table in document.element.body.iter(qn("w:tbl")):
+        first_row = table.find(qn("w:tr"))
+        header_text = _paragraph_text(first_row).upper() if first_row is not None else ""
+        if "MEDICATION" in header_text and "DOSAGE" in header_text:
+            return table
+    return None
+
+
+def render_medication_note(document, note_lines):
+    """Replace the template's fixed floating note with a note placed right under the medicine table.
+
+    The template's note is a floating text box at a fixed offset sized for a full table, so it
+    leaves a large gap once empty rows are removed. It is removed, and when the source has a note
+    below the medications it is added as a borderless last row of the table instead.
+    """
+    body = document.element.body
+    run_props = None
+
+    for text_el in list(body.iter(qn("w:t"))):
+        if MEDICATION_NOTE_TEMPLATE_TEXT not in (text_el.text or "").upper():
+            continue
+        if run_props is None:
+            inner_run = text_el.getparent()
+            found = inner_run.find(qn("w:rPr")) if inner_run is not None else None
+            run_props = deepcopy(found) if found is not None else None
+
+    # Remove the run in a body-level paragraph that carries the floating note text box.
+    for paragraph in list(body.iterchildren(qn("w:p"))):
+        for run in list(paragraph.iterchildren(qn("w:r"))):
+            if MEDICATION_NOTE_TEMPLATE_TEXT in _paragraph_text(run).upper():
+                paragraph.remove(run)
+
+    note_lines = [line for line in (note_lines or []) if line.strip()]
+    table = _find_medication_table(document)
+    if not note_lines or table is None:
+        return
+
+    grid_cols = table.find(qn("w:tblGrid"))
+    col_widths = [int(col.get(qn("w:w"), "0")) for col in grid_cols.iterchildren(qn("w:gridCol"))] if grid_cols is not None else []
+
+    row = OxmlElement("w:tr")
+    cell = OxmlElement("w:tc")
+    tc_pr = OxmlElement("w:tcPr")
+    tc_w = OxmlElement("w:tcW")
+    tc_w.set(qn("w:w"), str(sum(col_widths) or 9000))
+    tc_w.set(qn("w:type"), "dxa")
+    tc_pr.append(tc_w)
+    if len(col_widths) > 1:
+        span = OxmlElement("w:gridSpan")
+        span.set(qn("w:val"), str(len(col_widths)))
+        tc_pr.append(span)
+    borders = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        border = OxmlElement(f"w:{side}")
+        border.set(qn("w:val"), "nil")
+        borders.append(border)
+    tc_pr.append(borders)
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:color"), "auto")
+    shading.set(qn("w:fill"), "auto")
+    tc_pr.append(shading)
+    cell.append(tc_pr)
+
+    for index, line in enumerate(note_lines):
+        paragraph = OxmlElement("w:p")
+        _set_paragraph_layout(
+            paragraph,
+            justify="left",
+            space_before=MEDICATION_NOTE_GAP_TWIPS if index == 0 else 0,
+        )
+        paragraph.append(_make_text_run(line.upper(), run_props))
+        cell.append(paragraph)
+
+    row.append(cell)
+    table.append(row)
+
+
+def _is_blank_paragraph(element):
+    if element.tag != qn("w:p"):
+        return False
+    if element.find(f".//{qn('w:drawing')}") is not None or element.find(f".//{qn('w:pict')}") is not None:
+        return False
+    if element.find(f".//{qn('w:sectPr')}") is not None or element.find(f".//{qn('w:br')}") is not None:
+        return False
+    if element.find(f".//{{{MC_NS}}}AlternateContent") is not None:
+        return False
+    return not _paragraph_text(element).strip()
+
+
+def start_notes_on_new_page(document):
+    """Replace the blank spacer lines after the medicines with a real page break.
+
+    The template pushes the next page ("Note & Instructions") over with empty paragraphs. When
+    the medicines page is full those spill onto their own page and leave a blank page behind.
+    """
+    table = _find_medication_table(document)
+    if table is None:
+        return
+    element = table.getnext()
+    # Keep the paragraphs that anchor the "Medicines" banner (and the old note box).
+    while element is not None and element.tag == qn("w:p") and "Medicines" in "".join(
+        t.text or "" for t in element.iter(qn("w:t"))
+    ):
+        element = element.getnext()
+
+    spacers = []
+    while element is not None and _is_blank_paragraph(element):
+        spacers.append(element)
+        element = element.getnext()
+    if element is None or element.tag != qn("w:p") or not spacers:
+        return
+
+    p_pr = element.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = OxmlElement("w:pPr")
+        element.insert(0, p_pr)
+    if p_pr.find(qn("w:pageBreakBefore")) is None:
+        page_break = OxmlElement("w:pageBreakBefore")
+        # Schema order: pStyle, keepNext, keepLines, pageBreakBefore, ...
+        anchor = None
+        for tag in ("w:keepLines", "w:keepNext", "w:pStyle"):
+            anchor = p_pr.find(qn(tag))
+            if anchor is not None:
+                break
+        if anchor is not None:
+            anchor.addnext(page_break)
+        else:
+            p_pr.insert(0, page_break)
+
+    for spacer in spacers:
+        spacer.getparent().remove(spacer)
+
+
+def remove_empty_medication_rows(document):
+    """Drop medication table rows that have no medicine data (keeps header and filled rows)."""
+    for table in document.element.body.iter(qn("w:tbl")):
+        rows = [row for row in table.iterchildren(qn("w:tr"))]
+        if not rows:
+            continue
+        header_text = _paragraph_text(rows[0]).upper()
+        if "MEDICATION" not in header_text or "DOSAGE" not in header_text:
+            continue
+
+        for row in rows[1:]:
+            cells = row.findall(qn("w:tc"))
+            data_cells = cells[1:] if len(cells) > 1 else cells
+            if not any(_paragraph_text(cell).strip() for cell in data_cells):
+                table.remove(row)
+
+
 def build_document_context(edited_data, max_meds):
     diagnosis = unique_preserve_order(edited_data.get("Diagnosis", []))
     combined_history = unique_preserve_order(
@@ -756,10 +1213,10 @@ def build_document_context(edited_data, max_meds):
         "ward": edited_data.get("ward", "").upper(),
         "admit": format_display_date(edited_data.get("admission_date", "")),
         "discharge": format_display_date(edited_data.get("discharge_date", "")),
-        "Diagnosis": format_multiline_field(diagnosis),
-        "ChiefComplaints": normalize_string(edited_data.get("ChiefComplaints", "")).upper(),
-        "Riskfactors": format_multiline_field(combined_history),
-        "Course": format_multiline_field(edited_data.get("Course", [])),
+        "Diagnosis": DIAGNOSIS_MARKER,
+        "ChiefComplaints": CHIEF_COMPLAINTS_MARKER,
+        "Riskfactors": RISKFACTORS_MARKER,
+        "Course": COURSE_MARKER,
         "TEMP": edited_data.get("Vitals", {}).get("TEMP", ""),
         "BP": edited_data.get("Vitals", {}).get("BP", ""),
         "PR": edited_data.get("Vitals", {}).get("PR", ""),
@@ -886,6 +1343,126 @@ def manual_entry():
     return redirect(url_for("home"))
 
 
+def edited_data_from_form(form, template_type):
+    """Read the review form into normalized patient data (no validation)."""
+    raw_json = form.get("json_data", "")
+    session_data = normalize_json_data(json.loads(raw_json)) if raw_json else empty_patient_data()
+    max_meds = get_max_medications(template_type)
+
+    edited_data = {
+        "umr": normalize_string(form.get("umr")) or session_data.get("umr", ""),
+        "name": normalize_string(form.get("name")) or session_data.get("name", ""),
+        "age/gender": normalize_string(form.get("age_gender")) or session_data.get("age/gender", ""),
+        "ad1": normalize_string(form.get("ad1")) or session_data.get("ad1", ""),
+        "ad2": normalize_string(form.get("ad2")) or session_data.get("ad2", ""),
+        "mob": normalize_string(form.get("mob")) or session_data.get("mob", ""),
+        "admision_number": normalize_string(form.get("admision_number")) or session_data.get("admision_number", ""),
+        "ward": normalize_string(form.get("ward")) or session_data.get("ward", ""),
+        "admission_date": normalize_string(form.get("admission_date")) or session_data.get("admission_date", ""),
+        "discharge_date": normalize_string(form.get("discharge_date")) or session_data.get("discharge_date", ""),
+        "Diagnosis": parse_multiline(form.get("Diagnosis")),
+        "Riskfactors": parse_multiline(form.get("Riskfactors")),
+        "PastHistory": parse_multiline(form.get("PastHistory")),
+        "ChiefComplaints": normalize_string(form.get("ChiefComplaints")),
+        "Course": parse_course_text(form.get("Course")),
+        "Vitals": {key: normalize_string(form.get(key)) for key in ("TEMP", "PR", "BP", "SPo2", "RR")},
+        "Examination": {key: normalize_string(form.get(key)) for key in ("CVS", "RS", "CNS", "PA")},
+        "Medications": [],
+        "MedicationNotes": parse_multiline(form.get("MedicationNotes")),
+        "cross1": normalize_string(form.get("cross1")),
+        "cross2": normalize_string(form.get("cross2")),
+        "cross3": normalize_string(form.get("cross3")),
+        "cross4": normalize_string(form.get("cross4")),
+    }
+
+    for index in range(1, max_meds + 1):
+        medication = {
+            "form": normalize_string(form.get(f"TAB{index}_form")).upper(),
+            "name": normalize_string(form.get(f"TAB{index}_name")),
+            "dosage": normalize_string(form.get(f"DOSAGE{index}")),
+            "freq": normalize_string(form.get(f"FREQ{index}")),
+            "time": normalize_string(form.get(f"TOM{index}")),
+        }
+        if any(medication.values()):
+            edited_data["Medications"].append(medication)
+
+    return normalize_json_data(edited_data)
+
+
+def build_report_docx(edited_data, selected_doctor, template_type, posted_template_path=None):
+    """Render the discharge summary. Returns (docx bytes, base file name without extension)."""
+    template_path = get_template_path(selected_doctor, template_type) or resolve_posted_template_path(
+        posted_template_path
+    )
+    if not template_path:
+        raise FileNotFoundError("Selected Word template was not found")
+
+    max_meds = get_max_medications(template_type)
+    context = build_document_context(edited_data, max_meds)
+    doc = DocxTemplate(str(template_path))
+    doc.render(context)
+    rendered = {
+        "course": render_course_block(doc.docx, clean_course_items(edited_data.get("Course", []))),
+        "chief_complaints": render_course_block(
+            doc.docx,
+            [clean_chief_complaints(edited_data.get("ChiefComplaints", ""))],
+            marker=CHIEF_COMPLAINTS_MARKER,
+            # The text box is wider than its rounded background; keep an even margin on the right.
+            right_indent=CHIEF_COMPLAINTS_RIGHT_INDENT_TWIPS,
+        ),
+        "diagnosis": render_course_block(
+            doc.docx,
+            unique_preserve_order(edited_data.get("Diagnosis", [])),
+            marker=DIAGNOSIS_MARKER,
+            justify="left",
+            paragraph_gap=LIST_ITEM_GAP_TWIPS,
+            indent=LIST_BOX_INDENT,
+        ),
+        "riskfactors": render_course_block(
+            doc.docx,
+            unique_preserve_order(edited_data.get("Riskfactors", []) + edited_data.get("PastHistory", [])),
+            marker=RISKFACTORS_MARKER,
+            justify="left",
+            paragraph_gap=LIST_ITEM_GAP_TWIPS,
+            indent=LIST_BOX_INDENT,
+        ),
+    }
+    arrange_cross_consultation_box(doc.docx, any(edited_data.get(f"cross{index}") for index in range(1, 5)))
+    remove_empty_medication_rows(doc.docx)
+    render_medication_note(doc.docx, edited_data.get("MedicationNotes", []))
+    start_notes_on_new_page(doc.docx)
+    fit_report_boxes(doc.docx, rendered, medication_table=_find_medication_table(doc.docx))
+
+    output_buffer = BytesIO()
+    doc.save(output_buffer)
+
+    patient_slug = re.sub(r"[^A-Za-z0-9]+", "_", context["name"]).strip("_") or "Patient"
+    base_name = f"Discharge_{patient_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    return output_buffer.getvalue(), base_name
+
+
+@app.route("/preview", methods=["POST"])
+def preview():
+    """Live preview for the review screen: the exact report as a PDF (shown inline)."""
+    selected_doctor = normalize_string(request.form.get("selected_doctor")).lower()
+    template_type = normalize_string(request.form.get("template_type")).lower() or "default"
+    try:
+        edited_data = edited_data_from_form(request.form, template_type)
+        docx_bytes, _ = build_report_docx(
+            edited_data, selected_doctor, template_type, request.form.get("template_path")
+        )
+        pdf_bytes = docx_to_pdf(docx_bytes)
+    except ConversionUnavailable as exc:
+        return jsonify({"error": str(exc), "unavailable": True}), 503
+    except Exception as exc:
+        app.logger.error("Preview failed: %s", exc, exc_info=True)
+        return jsonify({"error": f"Preview failed: {exc}"}), 500
+
+    response = send_file(BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.route("/review", methods=["GET", "POST"])
 def review():
     if request.method == "GET":
@@ -896,99 +1473,31 @@ def review():
     selected_doctor = normalize_string(request.form.get("selected_doctor")).lower()
     template_type = normalize_string(request.form.get("template_type")).lower() or "default"
     is_manual = normalize_string(request.form.get("is_manual")).lower() == "true"
-    template_path = None
+    output_format = "pdf" if normalize_string(request.form.get("output")).lower() == "pdf" else "docx"
 
     try:
         if not raw_json:
             flash("Data expired. Please start again.", "warning")
             return redirect(url_for("home"))
 
-        session_data = normalize_json_data(json.loads(raw_json))
-        max_meds = get_max_medications(template_type)
-
-        edited_data = {
-            "umr": normalize_string(request.form.get("umr")) or session_data.get("umr", ""),
-            "name": normalize_string(request.form.get("name")) or session_data.get("name", ""),
-            "age/gender": normalize_string(request.form.get("age_gender")) or session_data.get("age/gender", ""),
-            "ad1": normalize_string(request.form.get("ad1")) or session_data.get("ad1", ""),
-            "ad2": normalize_string(request.form.get("ad2")) or session_data.get("ad2", ""),
-            "mob": normalize_string(request.form.get("mob")) or session_data.get("mob", ""),
-            "admision_number": normalize_string(request.form.get("admision_number"))
-            or session_data.get("admision_number", ""),
-            "ward": normalize_string(request.form.get("ward")) or session_data.get("ward", ""),
-            "admission_date": normalize_string(request.form.get("admission_date"))
-            or session_data.get("admission_date", ""),
-            "discharge_date": normalize_string(request.form.get("discharge_date"))
-            or session_data.get("discharge_date", ""),
-            "Diagnosis": parse_multiline(request.form.get("Diagnosis")),
-            "Riskfactors": parse_multiline(request.form.get("Riskfactors")),
-            "PastHistory": parse_multiline(request.form.get("PastHistory")),
-            "ChiefComplaints": normalize_string(request.form.get("ChiefComplaints")),
-            "Course": parse_multiline(request.form.get("Course")),
-            "Vitals": {
-                "TEMP": normalize_string(request.form.get("TEMP")),
-                "PR": normalize_string(request.form.get("PR")),
-                "BP": normalize_string(request.form.get("BP")),
-                "SPo2": normalize_string(request.form.get("SPo2")),
-                "RR": normalize_string(request.form.get("RR")),
-            },
-            "Examination": {
-                "CVS": normalize_string(request.form.get("CVS")),
-                "RS": normalize_string(request.form.get("RS")),
-                "CNS": normalize_string(request.form.get("CNS")),
-                "PA": normalize_string(request.form.get("PA")),
-            },
-            "Medications": [],
-            "cross1": normalize_string(request.form.get("cross1")) or session_data.get("cross1", ""),
-            "cross2": normalize_string(request.form.get("cross2")) or session_data.get("cross2", ""),
-            "cross3": normalize_string(request.form.get("cross3")) or session_data.get("cross3", ""),
-            "cross4": normalize_string(request.form.get("cross4")) or session_data.get("cross4", ""),
-        }
-
-        for index in range(1, max_meds + 1):
-            form_value = normalize_string(request.form.get(f"TAB{index}_form")).upper()
-            name_value = normalize_string(request.form.get(f"TAB{index}_name"))
-            dosage_value = normalize_string(request.form.get(f"DOSAGE{index}"))
-            frequency_value = normalize_string(request.form.get(f"FREQ{index}"))
-            time_value = normalize_string(request.form.get(f"TOM{index}"))
-
-            if any([form_value, name_value, dosage_value, frequency_value, time_value]):
-                edited_data["Medications"].append(
-                    {
-                        "form": form_value,
-                        "name": name_value,
-                        "dosage": dosage_value,
-                        "freq": frequency_value,
-                        "time": time_value,
-                    }
-                )
-
-        edited_data = normalize_json_data(edited_data)
+        edited_data = edited_data_from_form(request.form, template_type)
         validate_json_data(edited_data)
-
-        template_path = get_template_path(selected_doctor, template_type) or resolve_posted_template_path(
-            request.form.get("template_path")
+        docx_bytes, base_name = build_report_docx(
+            edited_data, selected_doctor, template_type, request.form.get("template_path")
         )
-        if not template_path:
-            raise FileNotFoundError("Selected Word template was not found")
 
-        context = build_document_context(edited_data, max_meds)
-        doc = DocxTemplate(str(template_path))
-        doc.render(context)
+        if output_format == "pdf":
+            payload, filename, mimetype = docx_to_pdf(docx_bytes), f"{base_name}.pdf", "application/pdf"
+        else:
+            payload, filename = docx_bytes, f"{base_name}.docx"
+            mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-        output_buffer = BytesIO()
-        doc.save(output_buffer)
-        output_buffer.seek(0)
-
-        patient_slug = re.sub(r"[^A-Za-z0-9]+", "_", context["name"]).strip("_") or "Patient"
-        output_filename = f"Discharge_{patient_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
-
-        return send_file(
-            output_buffer,
-            as_attachment=True,
-            download_name=output_filename,
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
+        response = send_file(BytesIO(payload), as_attachment=True, download_name=filename, mimetype=mimetype)
+        # Lets the page know the download started so it can re-enable the download buttons.
+        download_token = re.sub(r"[^A-Za-z0-9_-]", "", request.form.get("download_token", ""))[:64]
+        if download_token:
+            response.set_cookie("download_token", download_token, max_age=120, path="/", samesite="Lax")
+        return response
     except Exception as exc:
         app.logger.error("Error generating document: %s", exc, exc_info=True)
         flash(f"Error during generation: {exc}", "danger")
@@ -1002,7 +1511,7 @@ def review():
             "edit_form.html",
             data=fallback_data,
             is_manual=is_manual,
-            template_path=str(template_path or resolve_posted_template_path(request.form.get("template_path")) or ""),
+            template_path=str(resolve_posted_template_path(request.form.get("template_path")) or ""),
             selected_doctor=selected_doctor,
             template_type=template_type,
         )

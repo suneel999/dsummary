@@ -6,6 +6,14 @@ ENV PORT=8000
 
 WORKDIR /app
 
+# Metric-compatible fonts (Times New Roman/Arial/Calibri substitutes) so the report
+# generator can measure text the same way Word lays it out, and LibreOffice (headless)
+# to produce the PDF preview/download on Linux.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends fonts-liberation fonts-crosextra-carlito fonts-dejavu-core \
+        libreoffice-writer-nogui && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
