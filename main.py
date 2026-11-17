@@ -538,11 +538,6 @@ def apply_cross_consultation_rule(data, pdf_bytes):
 
 
 def get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=2):
-    data = _get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=max_retries, base_delay=base_delay)
-    return apply_cross_consultation_rule(data, pdf_bytes)
-
-
-def _get_json_from_pdf_via_openai(pdf_bytes, filename, max_retries=3, base_delay=2):
     try:
         return request_openai_json(
             build_openai_messages(filename=filename, pdf_bytes=pdf_bytes),
@@ -743,8 +738,11 @@ def get_json_from_pdf_via_gemini(pdf_bytes, filename, max_retries=3, base_delay=
 
 def get_json_from_pdf(pdf_bytes, filename):
     if get_llm_provider() == "gemini":
-        return get_json_from_pdf_via_gemini(pdf_bytes, filename)
-    return get_json_from_pdf_via_openai(pdf_bytes, filename)
+        data = get_json_from_pdf_via_gemini(pdf_bytes, filename)
+    else:
+        data = get_json_from_pdf_via_openai(pdf_bytes, filename)
+    # Same rule for every provider: cross consultants only when the source has that heading.
+    return apply_cross_consultation_rule(data, pdf_bytes)
 
 
 def format_multiline_field(content):
