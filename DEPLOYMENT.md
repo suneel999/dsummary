@@ -105,6 +105,22 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+### 4b. PDF Preview and Text Fitting
+
+The review screen's live preview and the "Download PDF" button convert the report with
+LibreOffice. The report generator also measures text with fonts that have the same widths
+as Times New Roman / Arial / Calibri, so long content fits its boxes.
+
+```bash
+sudo apt install -y --no-install-recommends libreoffice-writer-nogui \
+    fonts-liberation fonts-crosextra-carlito fonts-dejavu-core
+sudo fc-cache -f
+```
+
+(On older releases without `libreoffice-writer-nogui`, install `libreoffice-writer`.)
+Check it after restarting: `curl -s http://127.0.0.1:8000/health` should show
+`"pdf_engine": "libreoffice"`, `"pillow_installed": true` and `"times_font_found": true`.
+
 ### 5. Configure Environment Variables
 
 ```bash

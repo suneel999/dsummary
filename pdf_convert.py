@@ -49,8 +49,10 @@ def _soffice_path():
     configured = os.getenv("LIBREOFFICE_PATH")
     if configured and Path(configured).exists():
         return configured
+    # The service's PATH may only contain the virtualenv, so also look in the system folders.
+    search_path = os.pathsep.join([os.environ.get("PATH", ""), "/usr/local/bin", "/usr/bin", "/bin", "/snap/bin"])
     for name in ("soffice", "libreoffice"):
-        found = shutil.which(name)
+        found = shutil.which(name, path=search_path)
         if found:
             return found
     for candidate in (
@@ -106,6 +108,21 @@ def _convert_with_word(source, target):
             pythoncom.CoUninitialize()
 
 
+def _libreoffice_env(workdir):
+    """Environment for soffice.
+
+    The systemd service limits PATH to the virtualenv, but LibreOffice's start script needs the
+    normal system tools, and the service user (www-data) has no writable home directory.
+    """
+    env = dict(os.environ)
+    system_paths = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+    current = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    if os.name != "nt":
+        env["PATH"] = os.pathsep.join(current + [p for p in system_paths if p not in current])
+        env["HOME"] = str(workdir)
+    return env
+
+
 def _convert_with_libreoffice(source, target, workdir):
     soffice = _soffice_path()
     # A private profile per conversion lets several conversions run at the same time.
@@ -126,6 +143,7 @@ def _convert_with_libreoffice(source, target, workdir):
         capture_output=True,
         timeout=CONVERSION_TIMEOUT_SECONDS,
         check=False,
+        env=_libreoffice_env(workdir),
     )
     if result.returncode != 0 or not target.exists():
         message = (result.stderr or result.stdout or b"").decode("utf8", "ignore").strip()

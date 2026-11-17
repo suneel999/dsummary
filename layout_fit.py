@@ -111,6 +111,11 @@ def _load_font(name, bold):
     return None
 
 
+def font_available(name, bold=False):
+    """True when real metrics (Pillow + a matching font file) are available for this font."""
+    return _load_font(name, bold) is not None
+
+
 def text_width_pt(text, font_name, size_pt, bold=False):
     font = _load_font(font_name, bold)
     if font is None:

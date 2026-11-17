@@ -17,7 +17,8 @@ from docx.oxml.ns import qn
 from docxtpl import DocxTemplate
 
 from layout_fit import fit_report_boxes
-from pdf_convert import ConversionUnavailable, docx_to_pdf
+from layout_fit import font_available as layout_fit_font_available
+from pdf_convert import ConversionUnavailable, available_engine, docx_to_pdf
 from dotenv import load_dotenv
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -1258,7 +1259,22 @@ def request_entity_too_large(_error):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "time": datetime.utcnow().isoformat() + "Z"})
+    try:
+        import PIL  # noqa: F401
+
+        pillow = True
+    except ImportError:
+        pillow = False
+    return jsonify(
+        {
+            "status": "ok",
+            "time": datetime.utcnow().isoformat() + "Z",
+            # Setup checks for the PDF preview and the text-fitting measurements.
+            "pdf_engine": available_engine() or "none (install LibreOffice)",
+            "pillow_installed": pillow,
+            "times_font_found": layout_fit_font_available("Times New Roman"),
+        }
+    )
 
 
 @app.route("/", methods=["GET", "POST"])
