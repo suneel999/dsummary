@@ -182,7 +182,7 @@ Rules:
 4. Separate Riskfactors and PastHistory even if the source combines them.
 5. Extract every medication you can find.
 6. Keep medicine forms like TAB, CAP, INJ, SYP, and DROP when present.
-7. cross1-cross4: fill ONLY from a section whose heading is "Cross Consultation(s)" / "Cross Consultant(s)" / "Cross Consults", copying each doctor exactly as written (one per field). If the document has no such heading, leave all four empty (""). Never use the treating/consultant doctors, referring doctor or signature names for these fields.
+7. cross1-cross4: fill ONLY from the field whose label is "Cross Consultation(s)" / "Cross Consultant(s)" / "Cross Consults" (the label may be split over two lines, e.g. "CROSS" above "CONSULTATION", with the doctor written next to it), copying each doctor exactly as written (one per field). If the document has no such heading, leave all four empty (""). Never use the treating/consultant doctors, referring doctor or signature names for these fields.
 8. Course: one array item per paragraph exactly as the source divides it into paragraphs (usually 2-3). Keep all sentences of a paragraph together in one item, and join lines the PDF wrapped in the middle of a sentence. Do not split a paragraph into separate sentences. Do not include bullet symbols or numbering.
 9. MedicationNotes: instruction lines written directly below the discharge medication list (for example "Continue old diabetic medications as earlier"), copied as written. Use [] if there are none. Do not put follow-up, review or diet advice here.
 10. Output JSON only.
@@ -517,12 +517,58 @@ def request_openai_json(messages, max_retries=3, base_delay=2):
     raise last_error or RuntimeError("OpenAI extraction failed")
 
 
-CROSS_CONSULTATION_HEADING_RE = re.compile(r"cross[\s\-_.]*consult", re.IGNORECASE)
+# "Cross Consultation" heading on one line ("CROSS CONSULTATION : Dr. X") ...
+CROSS_INLINE_HEADING_RE = re.compile(r"^\s*cross[\s\-_.]*consult\w*\s*[:\-]?\s*(?P<value>.*)$", re.IGNORECASE)
+# ... or as a two-line label with the value next to the first line:
+#     CROSS        : Dr. Seshayamma MBBS,MD(General medicine).
+#     CONSULTATION
+CROSS_LABEL_RE = re.compile(r"^\s*cross\b\s*[:\-]?\s*(?P<value>.*)$", re.IGNORECASE)
+CONSULT_LABEL_RE = re.compile(r"^\s*consult\w*\b\s*[:\-]?\s*(?P<value>.*)$", re.IGNORECASE)
+# Start of the next field in the label column, e.g. "DIAGNOSIS : ..." or "Referred By :".
+NEXT_FIELD_RE = re.compile(r"^\s*[A-Za-z][A-Za-z /&().'-]{1,40}?\s*:")
+DOCTOR_SPLIT_RE = re.compile(r"\s*[,;]?\s*(?=\bDr\b\.?\s)", re.IGNORECASE)
+
+
+def _split_doctors(text):
+    parts = [part.strip(" ,;") for part in DOCTOR_SPLIT_RE.split(text or "")]
+    return [part for part in parts if part]
+
+
+def find_cross_consultants(pdf_text):
+    """Return (heading_found, [doctor, ...]) from the PDF text, copied as written."""
+    lines = pdf_text.splitlines()
+    for index, line in enumerate(lines):
+        value = None
+        next_index = index + 1
+        inline = CROSS_INLINE_HEADING_RE.match(line)
+        if inline:
+            value = inline.group("value")
+        else:
+            label = CROSS_LABEL_RE.match(line)
+            following = CONSULT_LABEL_RE.match(lines[index + 1]) if index + 1 < len(lines) else None
+            if label and following:
+                value = f"{label.group('value')} {following.group('value')}".strip()
+                next_index = index + 2
+        if value is None:
+            continue
+
+        doctors = _split_doctors(value)
+        # More cross consultants continue on the following lines, one per line, until the next field.
+        for extra in lines[next_index:]:
+            stripped = extra.strip()
+            if not stripped or NEXT_FIELD_RE.match(stripped) or not re.match(r"dr\b", stripped, re.IGNORECASE):
+                break
+            doctors.extend(_split_doctors(stripped))
+        return True, doctors
+    return False, []
 
 
 def apply_cross_consultation_rule(data, pdf_bytes):
-    """Keep cross consultants only when the source PDF has a "Cross Consultation" heading.
+    """Cross consultants come only from the source PDF's "Cross Consultation" field.
 
+    * No such heading in the PDF: the fields are cleared (the box is removed from the report).
+    * Heading present: the doctors written there are used exactly as written; if they cannot be
+      read from the text, the AI's answer is kept.
     Scanned PDFs have no extractable text; then the AI result (bound by the same rule in its
     prompt) is kept as is.
     """
@@ -532,9 +578,16 @@ def apply_cross_consultation_rule(data, pdf_bytes):
         app.logger.warning("Could not read PDF text for cross consultation check: %s", exc)
         return data
 
-    if pdf_text.strip() and not CROSS_CONSULTATION_HEADING_RE.search(pdf_text):
+    if not pdf_text.strip():
+        return data
+
+    heading_found, doctors = find_cross_consultants(pdf_text)
+    if not heading_found:
         for index in range(1, 5):
             data[f"cross{index}"] = ""
+    elif doctors:
+        for index in range(1, 5):
+            data[f"cross{index}"] = doctors[index - 1] if index <= len(doctors) else ""
     return data
 
 
