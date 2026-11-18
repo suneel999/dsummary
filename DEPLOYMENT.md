@@ -113,11 +113,19 @@ as Times New Roman / Arial / Calibri, so long content fits its boxes.
 
 ```bash
 sudo apt install -y --no-install-recommends libreoffice-writer-nogui \
-    fonts-liberation fonts-crosextra-carlito fonts-dejavu-core
+    fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-wine fonts-dejavu-core
 sudo fc-cache -f
 ```
 
 (On older releases without `libreoffice-writer-nogui`, install `libreoffice-writer`.)
+
+The fonts matter: the templates use Times New Roman, Arial, Calibri, Cambria and Tahoma.
+Liberation (Times/Arial), Carlito (Calibri), Caladea (Cambria) and the Wine Tahoma
+(`fonts-wine`) have exactly the same character widths, so lines break exactly as in Word.
+
+Use a recent LibreOffice (24.x or newer). Check with `soffice --version`; Ubuntu 22.04 ships
+7.3, which is too old — on 22.04 add the official PPA first:
+`sudo add-apt-repository ppa:libreoffice/ppa && sudo apt update`.
 Check it after restarting: `curl -s http://127.0.0.1:8000/health` should show
 `"pdf_engine": "libreoffice"`, `"pillow_installed": true` and `"times_font_found": true`.
 

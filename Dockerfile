@@ -10,8 +10,8 @@ WORKDIR /app
 # generator can measure text the same way Word lays it out, and LibreOffice (headless)
 # to produce the PDF preview/download on Linux.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends fonts-liberation fonts-crosextra-carlito fonts-dejavu-core \
-        libreoffice-writer-nogui && \
+    apt-get install -y --no-install-recommends fonts-liberation fonts-crosextra-carlito \
+        fonts-crosextra-caladea fonts-wine fonts-dejavu-core libreoffice-writer-nogui && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -27,7 +27,90 @@
             color: #1a1a2e;
             line-height: 1.5;
         }
-        .container { max-width: 1100px; }
+        .page-wrap { max-width: 1840px; }
+        .preview-panel {
+            position: sticky;
+            top: 1rem;
+            height: calc(100vh - 2rem);
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            border-radius: var(--border-radius);
+            box-shadow: var(--card-shadow);
+            overflow: hidden;
+        }
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: var(--primary-gradient);
+            color: #fff;
+        }
+        .preview-header .btn { padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+        .preview-status {
+            font-size: 0.75rem;
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.18);
+        }
+        .preview-status.ok { background: rgba(0, 168, 107, 0.85); }
+        .preview-status.busy, .preview-status.pending { background: rgba(255, 193, 7, 0.9); color: #1a1a2e; }
+        .preview-status.error { background: rgba(220, 53, 69, 0.9); }
+        .preview-body {
+            position: relative;
+            flex: 1;
+            background: #525659;
+        }
+        .preview-body iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            display: block;
+        }
+        .preview-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.75);
+            color: #1a1a2e;
+        }
+        .preview-message {
+            position: absolute;
+            left: 1rem;
+            right: 1rem;
+            top: 1rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            background: #fff3cd;
+            color: #664d03;
+            font-size: 0.875rem;
+        }
+        .preview-footer {
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+            color: #6b7785;
+            border-top: 1px solid #e8ecef;
+        }
+        .btn-outline-primary {
+            border: 1.5px solid var(--primary-color);
+            color: var(--primary-color);
+            background: #fff;
+        }
+        .btn-outline-primary:hover { background: rgba(0, 102, 204, 0.08); color: var(--primary-dark); }
+        @media (max-width: 1199.98px) {
+            .preview-panel { position: static; height: 85vh; }
+        }
+        .card { 
+            border: none; 
+            box-shadow: var(--card-shadow);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            background: #fff;
+        }
         .card-header { 
             background: var(--primary-gradient); 
             color: #fff;
@@ -257,7 +340,9 @@
     </style>
 </head>
 <body>
-<div class="container my-4">
+<div class="container-fluid page-wrap my-4">
+    <div class="row g-4 align-items-start">
+        <div class="col-xl-6">
     <div class="card">
         <div class="card-header">
             <h3 class="mb-0">
@@ -575,60 +660,61 @@
                     <a class="btn btn-outline-secondary" href="{{ url_for('home') }}">
                         <i class="bi bi-arrow-left me-2"></i>Back to Home
                     </a>
-                    <button class="btn btn-primary" type="submit" name="output" value="docx" id="generateBtn">
-                        <i class="bi bi-file-earmark-word me-2"></i>Generate Document
-                        <span class="spinner-border spinner-border-sm ms-2 d-none" id="generateSpinner"></span>
-                    </button>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button class="btn btn-outline-primary download-btn" type="submit" name="output" value="docx" id="downloadWordBtn"
+                                title="Download as Word to make manual changes">
+                            <i class="bi bi-file-earmark-word"></i>Download Word
+                            <span class="spinner-border spinner-border-sm d-none"></span>
+                        </button>
+                        <button class="btn btn-primary download-btn" type="submit" name="output" value="pdf" id="downloadPdfBtn"
+                                title="Download the final report as PDF">
+                            <i class="bi bi-file-earmark-pdf"></i>Download PDF
+                            <span class="spinner-border spinner-border-sm d-none"></span>
+                        </button>
+                    </div>
                 </div>
             </form>
+        </div>
+    </div>
+        </div>
+
+        <!-- Live preview of the final report -->
+        <div class="col-xl-6">
+            <div class="preview-panel">
+                <div class="preview-header">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-eye"></i>
+                        <strong>Report preview</strong>
+                        <span class="preview-status" id="previewStatus">Loading…</span>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-light" id="refreshPreviewBtn" title="Refresh preview">
+                        <i class="bi bi-arrow-clockwise"></i>Refresh
+                    </button>
+                </div>
+                <div class="preview-body">
+                    <iframe id="previewFrame" title="Report preview"></iframe>
+                    <div class="preview-overlay" id="previewOverlay">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <div class="mt-2 small">Preparing the report…</div>
+                    </div>
+                    <div class="preview-message d-none" id="previewMessage"></div>
+                </div>
+                <div class="preview-footer">
+                    This is the exact report. It updates automatically a moment after you stop typing.
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // Generate button loading state. The server answers with a file download (the page does
-    // not change), so we watch for the download_token cookie it sets to know the file arrived.
-    const generateBtn = document.getElementById('generateBtn');
-    const generateSpinner = document.getElementById('generateSpinner');
+    const mainForm = document.getElementById('mainForm');
+    const downloadButtons = Array.from(document.querySelectorAll('.download-btn'));
     let downloadWatcher = null;
 
-    function getCookie(name) {
-        const match = document.cookie.split('; ').find(row => row.startsWith(name + '='));
-        return match ? decodeURIComponent(match.split('=')[1]) : null;
-    }
-
-    function resetGenerateButton() {
-        if (downloadWatcher) {
-            clearInterval(downloadWatcher);
-            downloadWatcher = null;
-        }
-        generateBtn.disabled = false;
-        generateSpinner.classList.add('d-none');
-        document.cookie = 'download_token=; Max-Age=0; path=/; SameSite=Lax';
-    }
-
-    function watchForDownload(token) {
-        const startedAt = Date.now();
-        downloadWatcher = setInterval(function() {
-            if (getCookie('download_token') === token || Date.now() - startedAt > 60000) {
-                resetGenerateButton();
-            }
-        }, 400);
-    }
-
-    // Coming back to this page via the browser's Back button should never show a stuck spinner.
-    window.addEventListener('pageshow', resetGenerateButton);
-
-    // Update hidden JSON field before form submission with all patient info
-    document.getElementById('mainForm').addEventListener('submit', function(e) {
-        const token = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        document.getElementById('downloadToken').value = token;
-        // Disable after the browser has captured the form submission
-        setTimeout(function() { generateBtn.disabled = true; }, 0);
-        generateSpinner.classList.remove('d-none');
-        watchForDownload(token);
-
+    // ---- keep the hidden JSON in sync with the visible patient fields ----
+    function syncJsonField() {
         const field = document.getElementById('jsonDataField');
         const currentData = JSON.parse(field.value || '{}');
         currentData['name'] = document.getElementById('name').value;
@@ -645,6 +731,126 @@
             currentData[key] = document.querySelector('[name="' + key + '"]').value;
         });
         field.value = JSON.stringify(currentData);
+    }
+
+    // ---- live preview ----
+    const previewFrame = document.getElementById('previewFrame');
+    const previewOverlay = document.getElementById('previewOverlay');
+    const previewMessage = document.getElementById('previewMessage');
+    const previewStatus = document.getElementById('previewStatus');
+    let previewUrl = null;
+    let previewTimer = null;
+    let previewInFlight = false;
+    let previewQueued = false;
+
+    function setStatus(text, kind) {
+        previewStatus.textContent = text;
+        previewStatus.className = 'preview-status' + (kind ? ' ' + kind : '');
+    }
+
+    function showMessage(html) {
+        previewMessage.innerHTML = html;
+        previewMessage.classList.remove('d-none');
+    }
+
+    async function refreshPreview() {
+        if (previewInFlight) {
+            previewQueued = true;
+            return;
+        }
+        previewInFlight = true;
+        previewQueued = false;
+        clearTimeout(previewTimer);
+        syncJsonField();
+        previewOverlay.classList.remove('d-none');
+        setStatus('Updating…', 'busy');
+
+        try {
+            const response = await fetch('{{ url_for("preview") }}', { method: 'POST', body: new FormData(mainForm) });
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                previewFrame.src = url + '#view=FitH&navpanes=0';
+                if (previewUrl) setTimeout(URL.revokeObjectURL.bind(URL, previewUrl), 5000);
+                previewUrl = url;
+                previewMessage.classList.add('d-none');
+                setStatus('Up to date', 'ok');
+            } else {
+                let info = {};
+                try { info = await response.json(); } catch (err) { /* not JSON */ }
+                if (info.unavailable) {
+                    document.getElementById('downloadPdfBtn').disabled = true;
+                    showMessage('<i class="bi bi-info-circle"></i> ' + (info.error || 'Preview is not available on this server.'));
+                    setStatus('Unavailable', 'error');
+                } else {
+                    showMessage('<i class="bi bi-exclamation-triangle"></i> ' + (info.error || 'Could not prepare the preview.'));
+                    setStatus('Error', 'error');
+                }
+            }
+        } catch (err) {
+            showMessage('<i class="bi bi-wifi-off"></i> Could not reach the server for the preview.');
+            setStatus('Error', 'error');
+        } finally {
+            previewInFlight = false;
+            previewOverlay.classList.add('d-none');
+            if (previewQueued) refreshPreview();
+        }
+    }
+
+    function schedulePreview() {
+        setStatus('Changes pending…', 'pending');
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(refreshPreview, 1500);
+    }
+
+    mainForm.addEventListener('input', schedulePreview);
+    mainForm.addEventListener('change', schedulePreview);
+    document.getElementById('refreshPreviewBtn').addEventListener('click', refreshPreview);
+    refreshPreview();
+
+    // ---- downloads (PDF / Word) ----
+    // The server answers with a file (the page does not change), so we watch for the
+    // download_token cookie it sets to know the file arrived and re-enable the buttons.
+    function getCookie(name) {
+        const match = document.cookie.split('; ').find(row => row.startsWith(name + '='));
+        return match ? decodeURIComponent(match.split('=')[1]) : null;
+    }
+
+    function resetDownloadButtons() {
+        if (downloadWatcher) {
+            clearInterval(downloadWatcher);
+            downloadWatcher = null;
+        }
+        downloadButtons.forEach(function(btn) {
+            if (!(btn.id === 'downloadPdfBtn' && previewStatus.textContent === 'Unavailable')) btn.disabled = false;
+            btn.querySelector('.spinner-border').classList.add('d-none');
+        });
+        document.cookie = 'download_token=; Max-Age=0; path=/; SameSite=Lax';
+    }
+
+    function watchForDownload(token) {
+        const startedAt = Date.now();
+        downloadWatcher = setInterval(function() {
+            if (getCookie('download_token') === token || Date.now() - startedAt > 90000) {
+                resetDownloadButtons();
+            }
+        }, 400);
+    }
+
+    // Coming back to this page via the browser's Back button should never show a stuck spinner.
+    window.addEventListener('pageshow', resetDownloadButtons);
+
+    mainForm.addEventListener('submit', function(e) {
+        syncJsonField();
+        const token = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        document.getElementById('downloadToken').value = token;
+        const clicked = e.submitter;
+        if (clicked && clicked.classList.contains('download-btn')) {
+            clicked.querySelector('.spinner-border').classList.remove('d-none');
+        }
+        // Disable after the browser has captured the form submission (keeps the clicked button's value)
+        setTimeout(function() { downloadButtons.forEach(function(btn) { btn.disabled = true; }); }, 0);
+        watchForDownload(token);
     });
 </script>
 </body>

@@ -18,7 +18,7 @@ from docxtpl import DocxTemplate
 
 from layout_fit import fit_report_boxes
 from layout_fit import font_available as layout_fit_font_available
-from pdf_convert import available_engine, docx_to_pdf
+from pdf_convert import ConversionUnavailable, available_engine, docx_to_pdf
 from dotenv import load_dotenv
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -1134,6 +1134,260 @@ def _is_blank_paragraph(element):
     return not _paragraph_text(element).strip()
 
 
+WRAP_TAGS = ("wrapSquare", "wrapTopAndBottom", "wrapTight", "wrapThrough", "wrapNone")
+TITLE_EXTRA_ROOM_TWIPS = 80  # 4pt: Word fits the title with <1pt to spare, LibreOffice wraps it
+
+
+def normalize_layout_for_all_renderers(document):
+    """Small template adjustments so Word (any version) and LibreOffice lay pages out the same.
+
+    * Boxes pinned to a fixed page position no longer push text away. They are decoration over
+      empty spacer lines anyway, but LibreOffice pushes the very paragraph they are anchored to
+      onto the next page, taking every box on that page with it.
+    * The "DISCHARGE SUMMARY" title gets a few points more room so it never wraps.
+    """
+    body = document.element.body
+    for anchor in body.iter(f"{{{WP_NS}}}anchor"):
+        if any(ancestor.tag == f"{{{WP_NS}}}anchor" for ancestor in anchor.iterancestors()):
+            continue
+        pos_v = anchor.find(f"{{{WP_NS}}}positionV")
+        wrap = next((child for child in anchor if child.tag.split("}")[1] in WRAP_TAGS), None)
+        if pos_v is None or wrap is None:
+            continue
+        if pos_v.get("relativeFrom") == "page":
+            if wrap.tag != f"{{{WP_NS}}}wrapNone":
+                wrap.addprevious(OxmlElement("wp:wrapNone"))
+                anchor.remove(wrap)
+        elif wrap.tag in (f"{{{WP_NS}}}wrapSquare", f"{{{WP_NS}}}wrapTight", f"{{{WP_NS}}}wrapThrough"):
+            # Boxes that move with the text (e.g. Course) must push what follows *below* them.
+            # Word does that for these near full-width boxes; LibreOffice slides text up beside
+            # or under them. "Top and bottom" wrapping means the same thing to both.
+            extent = anchor.find(f"{{{WP_NS}}}extent")
+            if extent is not None and int(extent.get("cx", "0")) >= 400 * EMU_PER_PT:
+                # If the box's paragraph ends the page (a page-starting section break follows),
+                # there is nothing to push down: keep it in front of text, otherwise LibreOffice
+                # may move a tall box to the next page and leave a blank page behind.
+                holder = anchor
+                while holder is not None and holder.getparent() is not body:
+                    holder = holder.getparent()
+                sect = holder.find(f"{qn('w:pPr')}/{qn('w:sectPr')}") if holder is not None else None
+                sect_type = sect.find(qn("w:type")) if sect is not None else None
+                ends_page = sect is not None and (sect_type is None or sect_type.get(qn("w:val")) != "continuous")
+                # ...but only when the box also starts its page (just empty lines since the last
+                # page break). Otherwise its own height is what moves it to a new page.
+                starts_page = ends_page and _only_blank_since_page_break(holder)
+                if ends_page and not starts_page and int(extent.get("cy", "0")) >= 400 * EMU_PER_PT:
+                    # A full-page box (custom Course) that only reaches its own page because it
+                    # is too tall for the previous one: make that page break explicit. Word puts
+                    # the box's paragraph at the very top of the new page; the blank spacer lines
+                    # before it are invisible filler that would otherwise spill onto a page of
+                    # their own, so they are removed.
+                    previous = holder.getprevious()
+                    while previous is not None and _is_blank_paragraph(previous):
+                        before = previous.getprevious()
+                        previous.getparent().remove(previous)
+                        previous = before
+                    _add_page_break_before(holder)
+                    starts_page = True
+                replacement = OxmlElement("wp:wrapNone" if starts_page else "wp:wrapTopAndBottom")
+                wrap.addprevious(replacement)
+                anchor.remove(wrap)
+
+    _fix_consultant_line_breaks(body)
+    _fix_signature_line_breaks(body)
+    _relax_two_column_header(body)
+    _complete_underlines(document)
+
+    for paragraph in body.iterchildren(qn("w:p")):
+        p_pr = paragraph.find(qn("w:pPr"))
+        style = p_pr.find(qn("w:pStyle")) if p_pr is not None else None
+        if style is None or style.get(qn("w:val")) != "Title":
+            continue
+        ind = p_pr.find(qn("w:ind"))
+        if ind is None:
+            # Title style indent (ind left 2020) comes from the style; override it here.
+            styles = document.styles.element
+            title_style = styles.find(f"{qn('w:style')}[@{qn('w:styleId')}='Title']")
+            style_ind = title_style.find(f"{qn('w:pPr')}/{qn('w:ind')}") if title_style is not None else None
+            left = int(style_ind.get(qn("w:left"), "0")) if style_ind is not None else 0
+            ind = OxmlElement("w:ind")
+            ind.set(qn("w:left"), str(max(0, left - TITLE_EXTRA_ROOM_TWIPS)))
+            # schema order inside pPr: pStyle ... spacing, ind ... rPr
+            r_pr = p_pr.find(qn("w:rPr"))
+            if r_pr is not None:
+                r_pr.addprevious(ind)
+            else:
+                p_pr.append(ind)
+
+
+def _add_page_break_before(paragraph):
+    p_pr = paragraph.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = OxmlElement("w:pPr")
+        paragraph.insert(0, p_pr)
+    if p_pr.find(qn("w:pageBreakBefore")) is not None:
+        return
+    page_break = OxmlElement("w:pageBreakBefore")
+    for tag in ("w:keepLines", "w:keepNext", "w:pStyle"):
+        anchor = p_pr.find(qn(tag))
+        if anchor is not None:
+            anchor.addnext(page_break)
+            return
+    p_pr.insert(0, page_break)
+
+
+def _only_blank_since_page_break(paragraph):
+    """True when every paragraph between the previous page-starting break and this one is empty."""
+    previous = paragraph.getprevious()
+    while previous is not None:
+        if previous.tag == qn("w:p"):
+            sect = previous.find(f"{qn('w:pPr')}/{qn('w:sectPr')}")
+            if sect is not None:
+                sect_type = sect.find(qn("w:type"))
+                if sect_type is None or sect_type.get(qn("w:val")) != "continuous":
+                    return True
+            if previous.find(f".//{qn('w:br')}[@{qn('w:type')}='page']") is not None:
+                return True
+            has_drawing = previous.find(f".//{qn('w:drawing')}") is not None or previous.find(f".//{qn('w:pict')}") is not None
+            if "".join(t.text or "" for t in previous.iter(qn("w:t"))).strip() or has_drawing:
+                return False
+        elif previous.tag == qn("w:tbl"):
+            return False
+        previous = previous.getprevious()
+    return True
+
+
+def _set_right_indent(paragraph, twips):
+    p_pr = paragraph.find(qn("w:pPr"))
+    ind = p_pr.find(qn("w:ind")) if p_pr is not None else None
+    if ind is not None:
+        ind.set(qn("w:right"), str(twips))
+
+
+def _fix_consultant_line_breaks(body):
+    """One doctor per line by explicit line breaks, not by squeezing text with a right indent.
+
+    In the Consultants box two doctors share a paragraph and the line only breaks between them
+    because a large right indent forces the wrap. Any renderer that measures text slightly
+    differently breaks it elsewhere (e.g. "(CTVS)" falling onto its own line).
+    """
+    for txbx in body.iter(qn("w:txbxContent")):
+        for paragraph in txbx.iterchildren(qn("w:p")):
+            doctor_runs = [
+                run for run in paragraph.iterchildren(qn("w:r"))
+                if "".join(t.text or "" for t in run.iter(qn("w:t"))).strip().startswith("Dr.")
+            ]
+            if not doctor_runs:
+                continue
+            if len(doctor_runs) < 2:
+                # a single doctor on the line: just stop the indent from squeezing it
+                _set_right_indent(paragraph, 0)
+                continue
+            for run in doctor_runs[1:]:
+                # drop the space run right before the name, then break the line
+                previous = run.getprevious()
+                while previous is not None and previous.tag != qn("w:r"):
+                    previous = previous.getprevious()
+                if previous is not None and not "".join(t.text or "" for t in previous.iter(qn("w:t"))).strip():
+                    previous.getparent().remove(previous)
+                first_text = run.find(qn("w:t"))
+                br = OxmlElement("w:br")
+                if first_text is not None:
+                    first_text.addprevious(br)
+                else:
+                    run.append(br)
+            _set_right_indent(paragraph, 0)
+
+
+def _fix_signature_line_breaks(body):
+    """'Created By ... / Modified By ...' share a paragraph that only breaks via a right indent."""
+    for paragraph in body.iterchildren(qn("w:p")):
+        runs = list(paragraph.iterchildren(qn("w:r")))
+        texts = ["".join(t.text or "" for t in run.iter(qn("w:t"))) for run in runs]
+        if not any(text.strip().startswith("Created") for text in texts):
+            continue
+        for run, text in zip(runs, texts):
+            t_el = run.find(qn("w:t"))
+            position = text.find("Modified")
+            if position > 0 and t_el is not None and len(run.findall(qn("w:t"))) == 1:
+                # "DOCTOR Modified " in one piece of text: break the line inside it
+                before, after = text[:position].rstrip(), text[position:]
+                t_el.text = before
+                br = OxmlElement("w:br")
+                t_el.addnext(br)
+                new_t = OxmlElement("w:t")
+                new_t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                new_t.text = after
+                br.addnext(new_t)
+                _set_right_indent(paragraph, -2000)
+                break
+            if text.strip().startswith("Modified"):
+                previous = run.getprevious()
+                if previous is not None and previous.tag == qn("w:r") and not "".join(
+                    t.text or "" for t in previous.iter(qn("w:t"))
+                ).strip() and previous.find(qn("w:tab")) is None:
+                    previous.getparent().remove(previous)
+                first_text = run.find(qn("w:t"))
+                br = OxmlElement("w:br")
+                (first_text.addprevious(br) if first_text is not None else run.append(br))
+                # The block sits in a narrow column next to a wide empty gap; let the lines use
+                # some of that gap so "DUTY DOCTOR" never wraps.
+                _set_right_indent(paragraph, -2000)
+                break
+
+
+def _complete_underlines(document):
+    """Underlines that set only a colour inherit their style's line type in Word but not in
+    LibreOffice; write the line type out explicitly."""
+    styles = {}
+    try:
+        for style in document.styles.element.iterchildren(qn("w:style")):
+            styles[style.get(qn("w:styleId"))] = style
+    except Exception:
+        return
+
+    def style_underline(style_id, seen=()):
+        style = styles.get(style_id)
+        if style is None or style_id in seen:
+            return None
+        u = style.find(f"{qn('w:rPr')}/{qn('w:u')}")
+        if u is not None and u.get(qn("w:val")):
+            return u.get(qn("w:val"))
+        based = style.find(qn("w:basedOn"))
+        return style_underline(based.get(qn("w:val")), seen + (style_id,)) if based is not None else None
+
+    for paragraph in document.element.body.iter(qn("w:p")):
+        style_el = paragraph.find(f"{qn('w:pPr')}/{qn('w:pStyle')}")
+        inherited = style_underline(style_el.get(qn("w:val"))) if style_el is not None else None
+        for u in paragraph.iterfind(f"{qn('w:r')}/{qn('w:rPr')}/{qn('w:u')}"):
+            if not u.get(qn("w:val")):
+                u.set(qn("w:val"), inherited or "single")
+
+
+def _relax_two_column_header(body):
+    """Right-hand patient details column: no positive right indents (they make lines wrap)."""
+    children = list(body)
+    for index, element in enumerate(children):
+        sect = element.find(f"{qn('w:pPr')}/{qn('w:sectPr')}") if element.tag == qn("w:p") else None
+        cols = sect.find(qn("w:cols")) if sect is not None else None
+        if cols is None or cols.get(qn("w:num")) != "2":
+            continue
+        # paragraphs of this section run back to the previous section break
+        start = index
+        while start > 0:
+            prev = children[start - 1]
+            if prev.tag == qn("w:p") and prev.find(f"{qn('w:pPr')}/{qn('w:sectPr')}") is not None:
+                break
+            start -= 1
+        for paragraph in children[start:index + 1]:
+            if paragraph.tag != qn("w:p"):
+                continue
+            ind = paragraph.find(f"{qn('w:pPr')}/{qn('w:ind')}")
+            if ind is not None and int(ind.get(qn("w:right"), "0") or 0) > 0:
+                ind.set(qn("w:right"), "0")
+        break  # only the page-1 patient details header
+
+
 def start_notes_on_new_page(document):
     """Replace the blank spacer lines after the medicines with a real page break.
 
@@ -1445,6 +1699,7 @@ def build_report_docx(edited_data, selected_doctor, template_type, posted_templa
     remove_empty_medication_rows(doc.docx)
     render_medication_note(doc.docx, edited_data.get("MedicationNotes", []))
     start_notes_on_new_page(doc.docx)
+    normalize_layout_for_all_renderers(doc.docx)
     fit_report_boxes(doc.docx, rendered, medication_table=_find_medication_table(doc.docx))
 
     output_buffer = BytesIO()
@@ -1453,6 +1708,28 @@ def build_report_docx(edited_data, selected_doctor, template_type, posted_templa
     patient_slug = re.sub(r"[^A-Za-z0-9]+", "_", context["name"]).strip("_") or "Patient"
     base_name = f"Discharge_{patient_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return output_buffer.getvalue(), base_name
+
+
+@app.route("/preview", methods=["POST"])
+def preview():
+    """Live preview for the review screen: the exact report as a PDF (shown inline)."""
+    selected_doctor = normalize_string(request.form.get("selected_doctor")).lower()
+    template_type = normalize_string(request.form.get("template_type")).lower() or "default"
+    try:
+        edited_data = edited_data_from_form(request.form, template_type)
+        docx_bytes, _ = build_report_docx(
+            edited_data, selected_doctor, template_type, request.form.get("template_path")
+        )
+        pdf_bytes = docx_to_pdf(docx_bytes)
+    except ConversionUnavailable as exc:
+        return jsonify({"error": str(exc), "unavailable": True}), 503
+    except Exception as exc:
+        app.logger.error("Preview failed: %s", exc, exc_info=True)
+        return jsonify({"error": f"Preview failed: {exc}"}), 500
+
+    response = send_file(BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/review", methods=["GET", "POST"])

@@ -123,10 +123,30 @@ def _libreoffice_env(workdir):
     return env
 
 
+_libreoffice_lock = threading.Lock()
+
+
+def _libreoffice_profile_dir():
+    """One LibreOffice profile per server worker process, reused for every conversion.
+
+    Creating a fresh profile for each conversion is slow (seconds) and writes tens of MB of
+    temporary files. Each gunicorn worker is its own process with its own profile; threads in a
+    worker take turns (a profile can only be used by one LibreOffice at a time).
+    """
+    root = Path(os.getenv("LIBREOFFICE_PROFILE_DIR") or Path(tempfile.gettempdir(), "dsumarry-libreoffice"))
+    profile = root / f"profile-{os.getpid()}"
+    profile.mkdir(parents=True, exist_ok=True)
+    return profile
+
+
 def _convert_with_libreoffice(source, target, workdir):
     soffice = _soffice_path()
-    # A private profile per conversion lets several conversions run at the same time.
-    profile = Path(workdir, "lo-profile").resolve().as_uri()
+    profile = _libreoffice_profile_dir().resolve().as_uri()
+    with _libreoffice_lock:
+        _run_libreoffice(soffice, profile, source, target, workdir)
+
+
+def _run_libreoffice(soffice, profile, source, target, workdir):
     result = subprocess.run(
         [
             soffice,
@@ -162,8 +182,13 @@ def docx_to_pdf(docx_bytes):
         source = Path(workdir, "report.docx")
         target = Path(workdir, "report.pdf")
         source.write_bytes(docx_bytes)
-        if engine == "word":
-            _convert_with_word(source, target)
-        else:
-            _convert_with_libreoffice(source, target, workdir)
+        convert = _convert_with_word if engine == "word" else (
+            lambda src, dst: _convert_with_libreoffice(src, dst, workdir)
+        )
+        try:
+            convert(source, target)
+        except Exception:
+            # One retry: a conversion can fail on a transient problem (busy file, slow start).
+            target.unlink(missing_ok=True)
+            convert(source, target)
         return target.read_bytes()
