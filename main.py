@@ -18,7 +18,7 @@ from docxtpl import DocxTemplate
 
 from layout_fit import fit_report_boxes
 from layout_fit import font_available as layout_fit_font_available
-from pdf_convert import ConversionUnavailable, available_engine, docx_to_pdf
+from pdf_convert import available_engine, docx_to_pdf
 from dotenv import load_dotenv
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -1453,28 +1453,6 @@ def build_report_docx(edited_data, selected_doctor, template_type, posted_templa
     patient_slug = re.sub(r"[^A-Za-z0-9]+", "_", context["name"]).strip("_") or "Patient"
     base_name = f"Discharge_{patient_slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return output_buffer.getvalue(), base_name
-
-
-@app.route("/preview", methods=["POST"])
-def preview():
-    """Live preview for the review screen: the exact report as a PDF (shown inline)."""
-    selected_doctor = normalize_string(request.form.get("selected_doctor")).lower()
-    template_type = normalize_string(request.form.get("template_type")).lower() or "default"
-    try:
-        edited_data = edited_data_from_form(request.form, template_type)
-        docx_bytes, _ = build_report_docx(
-            edited_data, selected_doctor, template_type, request.form.get("template_path")
-        )
-        pdf_bytes = docx_to_pdf(docx_bytes)
-    except ConversionUnavailable as exc:
-        return jsonify({"error": str(exc), "unavailable": True}), 503
-    except Exception as exc:
-        app.logger.error("Preview failed: %s", exc, exc_info=True)
-        return jsonify({"error": f"Preview failed: {exc}"}), 500
-
-    response = send_file(BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False)
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
 @app.route("/review", methods=["GET", "POST"])
